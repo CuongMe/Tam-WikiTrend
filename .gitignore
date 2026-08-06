@@ -1,0 +1,43 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Notebook and local runtime state
+.ipynb_checkpoints/
+spark-warehouse/
+metastore_db/
+derby.log
+*.duckdb
+*.sqlite
+*.sqlite3
+*.log
+*.pid
+*.tmp
+*.crc
+
+# Local data lake outputs
+data/
+warehouse/
+mlruns/
+
+# Runtime logs
+logs/
+airflow/logs/
+
+# IDE and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Personal local notes
+Notepad.txt
