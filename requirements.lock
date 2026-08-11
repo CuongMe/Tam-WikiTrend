@@ -1,0 +1,20 @@
+# Direct runtime and test dependency lock for Python 3.11.
+# Install this file before the local package: pip install -r requirements.lock && pip install -e . --no-deps
+delta-spark==4.0.0
+duckdb==1.1.3
+fastapi==0.115.6
+httpx==0.28.1
+kafka-python==2.0.2
+lightgbm==4.5.0
+numpy==2.2.6
+pandas==2.2.3
+pandera==0.22.1
+pyarrow==18.1.0
+pyspark==4.0.1
+pytest==8.3.4
+python-dotenv==1.0.1
+requests==2.32.3
+ruff==0.8.4
+scikit-learn==1.6.0
+streamlit==1.41.1
+uvicorn[standard]==0.34.0

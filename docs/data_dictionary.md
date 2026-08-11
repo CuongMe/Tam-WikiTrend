@@ -1,169 +1,160 @@
 # WikiTrend Data Dictionary
 
-This document describes the current local lakehouse contracts. All timestamps are
-UTC. Parquet columns are shown using their logical names; Spark and DuckDB may display
-minor type differences such as `BIGINT` versus `long`.
+All timestamps are UTC. `source_project` is the Wikimedia dump domain code; `project`
+is the canonical analytical entity. `access_mode` is always `desktop` or `mobile`.
 
-## Current Development Snapshot
+## Snapshot Scope
 
-- Window: 83 hourly dumps from `2026-08-01` through `2026-08-04 10:00 UTC`.
-- Projects: `en`, `en.m`, `vi`, `vi.m`, `commons.m`, and `commons.m.m`.
-- `page_hourly`: 191,930,076 rows.
-- Eligible `trending_pages` and `forecast_features`: 62,923,736 rows.
-- `forecast_evaluation`: 24 summaries, four methods across six projects.
+The current Bronze development snapshot contains 83 hourly dumps from
+`2026-08-01 00:00` through `2026-08-04 10:00`. The planned research snapshot contains
+696 hours from `2026-07-08 00:00` through `2026-08-05 23:00`. The experiment uses
+origins through August 4 and retains August 5 traffic for labels. Row counts are
+recorded in validator outputs and snapshot manifests rather than hard-coded here.
 
-## Silver Pageviews
+## Canonical Dimensions
 
-Silver is trusted, parsed, standardized, deduplicated Parquet. It is partitioned by
-`date`, `hour`, and `project`.
+| `source_project` | `project` | `language` | `project_family` | `access_mode` |
+| --- | --- | --- | --- | --- |
+| `en` | `en` | `en` | `wikipedia` | `desktop` |
+| `en.m` | `en` | `en` | `wikipedia` | `mobile` |
+| `vi` | `vi` | `vi` | `wikipedia` | `desktop` |
+| `vi.m` | `vi` | `vi` | `wikipedia` | `mobile` |
+| `commons.m` | `commons` | null | `commons` | `desktop` |
+| `commons.m.m` | `commons` | null | `commons` | `mobile` |
+| `www.wd` | `wikidata` | null | `wikidata` | `desktop` |
+| `www.wd.m` | `wikidata` | null | `wikidata` | `mobile` (supported, optional) |
 
-| Column | Type | Description |
+## Bronze
+
+Bronze files retain the official `pageviews-YYYYMMDD-HH0000.gz` bytes under
+`data/raw/pageviews/YYYY/YYYY-MM/`. The tracked Bronze snapshot manifest records path,
+date, hour, byte size, and SHA-256. The downloader's operational manifest additionally
+records source URL.
+
+## Silver `pageviews`
+
+Grain: one accepted source project/title/hour record. Natural key:
+`date, hour, source_project, project, access_mode, page_title`.
+
+Partitioning: `date`, `hour`, canonical `project`, `access_mode`.
+
+| Column | Type | Contract |
 | --- | --- | --- |
-| `date` | date/string | UTC dump date as `YYYY-MM-DD`. |
-| `hour` | int | UTC dump hour from `0` to `23`. |
-| `project` | string | Wikimedia project code from the dump row. |
-| `language` | string | Inferred language code where applicable. |
-| `project_family` | string | Inferred family such as `wikipedia`, `wikidata`, or `commons`. |
-| `page_title` | string | Source page title before display normalization. |
-| `normalized_title` | string | URL-decoded display title with underscores replaced by spaces. |
-| `normalization_status` | string | Title normalization result and recovery status. |
-| `view_count` | long | Hourly page views; nonnegative. |
-| `response_size` | long | Response bytes for the row; nonnegative. |
-| `source_file` | string | Immutable Bronze file that produced the row. |
+| `date` | string | Source UTC date, `YYYY-MM-DD`. |
+| `hour` | int | Source UTC hour, 0 through 23. |
+| `source_project` | string | Exact dump code from the canonical mapping. |
+| `project` | string | `en`, `vi`, `commons`, or `wikidata`. |
+| `language` | string/null | Language where meaningful. |
+| `project_family` | string | `wikipedia`, `commons`, or `wikidata`. |
+| `access_mode` | string | `desktop` or `mobile`. |
+| `page_title` | string | Nonblank raw title token. |
+| `normalized_title` | string | URL-decoded title with underscores replaced by spaces. |
+| `normalization_status` | string | `normalized`, recovered malformed escape, or title-quality state. |
+| `view_count` | long | Nonnegative hourly views. |
+| `response_size` | long | Nonnegative response bytes. |
+| `source_file` | string | Bronze lineage URI/path. |
 
-Silver quarantine outputs are described in [Silver Quality Outputs](#silver-quality-outputs).
+Structurally or numerically invalid rows go to `data/quarantine/pageviews` with a
+`reject_reason`. Out-of-scope rows and quality counts go to
+`pageviews_rejection_summary`; out-of-scope rows are not mislabeled as malformed data.
 
-## Gold Table Grain
+## Gold Tables
+
+Every topic table retains `source_project`, `project`, `language`, `project_family`, and
+`access_mode`.
 
 | Table | Grain and purpose |
 | --- | --- |
-| `page_hourly` | One normalized topic, project, and hour. Reusable topic-level aggregate. |
-| `hourly_project_traffic` | One project and hour. Reconciles to sums from `page_hourly`. |
-| `top_pages_hourly` | Top-ranked topics within each project and hour. |
-| `trending_pages` | Eligible topic, project, and hour with trend features and rank. |
-| `anomaly_alerts` | High-volume subset of `trending_pages` that crosses the robust-score threshold. |
-| `forecast_features` | Eligible topic, project, and forecast-origin hour with leakage-safe baseline features. |
-| `forecast_evaluation` | One summary row per project and forecast method. |
+| `page_hourly` | Canonical project/access/normalized-title/source hour. |
+| `hourly_project_traffic` | Canonical project/access/source hour totals. |
+| `top_pages_hourly` | Top `N` observed pages per project/access/source hour. |
+| `modeling_page_hourly` | Bounded topic universe crossed with every source hour. |
+| `trending_pages` | Past-eligible active topic/origin with robust trend features. |
+| `anomaly_alerts` | High-volume robust-score threshold subset. |
+| `forecast_features` | Past-eligible topic/forecast origin and next-hour label. |
+| `forecast_evaluation` | Baseline traffic summaries by project/access/method. |
 
-Gold topic tables use `normalized_title` as the analytical topic key. `page_title` is
-retained as a representative source title for auditability.
+### `modeling_page_hourly`
 
-## `page_hourly`
+Absent sparse page-hours are explicit zero rows. `is_observed=false` means no source
+row existed for that topic-hour; it does not mean the dump file was missing. Missing
+source files or required projects fail Silver validation before Gold is built.
 
-| Column | Description |
+| Column | Meaning |
 | --- | --- |
-| `timestamp_hour` | UTC timestamp for the hour. |
-| `date`, `hour` | Hive partition and decomposed UTC time fields. |
-| `project`, `language`, `project_family` | Wikimedia dimensions. |
-| `page_title`, `normalized_title` | Representative and analytical titles. |
-| `view_count` | Sum of Silver views for the topic-hour. |
-| `response_size` | Sum of Silver response bytes for the topic-hour. |
-| `page_rows` | Number of Silver rows contributing to the topic-hour. |
+| `is_observed` | Whether `page_hourly` contained the topic at this hour. |
+| `view_count`, `response_size`, `page_rows` | Zero for an inserted sparse hour. |
+| `eligibility_history_views` | Cumulative views strictly before this origin. |
+| `eligibility_observed_hours` | Active source rows strictly before this origin. |
+| `eligible_at_origin` | Past-only threshold result; current/future traffic is excluded. |
 
-## `trending_pages`
+### `trending_pages`
 
-Trend rows are restricted to topics meeting the current eligibility rules:
-`topic_total_views >= 100` and at least `6` observed historical hours.
+The baseline uses the previous 24 completed grid hours and excludes the current hour.
 
-| Column | Description |
+| Column | Meaning |
 | --- | --- |
-| `previous_hour_views` | Views from the exact previous hour when that topic row exists. Nullable for sparse topics or the dataset boundary. |
-| `rolling_baseline_avg` | Mean raw view count in the past-only baseline window. Diagnostic only. |
-| `rolling_baseline_stddev` | Population standard deviation in raw view space. Diagnostic only; not used by the production score. |
-| `rolling_baseline_log_median` | Median of `log1p(view_count)` in the past-only baseline window. |
-| `rolling_baseline_log_mad` | Median absolute deviation of log-space baseline values. |
-| `baseline_observed_hours` | Number of observed topic hours in the baseline window. |
-| `baseline_window_hours` | Configured baseline length; currently `24`. |
-| `growth_rate` | `current / previous - 1` when the previous value is positive. Nullable when the previous value is missing or zero; do not replace with zero. |
-| `log1p_views` | `ln(1 + view_count)`, used to reduce heavy-tail effects. |
-| `robust_z_score` | Robust anomaly score in log space: `0.67449 * (log1p_views - log_median) / log_mad`. Nullable when history is insufficient or MAD is zero. |
-| `trend_score` | `max(robust_z_score, 0) * log1p_views * confidence_factor`. |
-| `trend_rank` | Rank within each date, hour, and project by descending trend score. |
+| `previous_hour_views` | Exact prior grid hour; zero is valid after completion. |
+| `growth_rate` | `current / previous - 1`; null when previous traffic is zero. |
+| `rolling_baseline_log_median` | Median of prior `log1p(view_count)` values. |
+| `rolling_baseline_log_mad` | Median absolute deviation around that median. |
+| `robust_z_score` | `0.6744897502 * (log1p(current)-median) / MAD`; null for zero MAD or insufficient history. |
+| `trend_score` | Positive robust score times `log1p(current)` and history confidence. |
+| `trend_rank` | Descending score within origin/project/access. |
 
-The confidence factor is:
+`rolling_baseline_avg` and `rolling_baseline_stddev` remain diagnostics; the standard
+deviation is not used in the trend score.
 
-```text
-min(1, baseline_observed_hours / 6)
-```
+### `forecast_features`
 
-The current hour is excluded from all trend baselines. Missing previous-hour rows are
-preserved as NULL because the source is sparse; Gold does not silently convert unknown
-or undefined ratios into zero.
-
-## `anomaly_alerts`
-
-This table contains high-volume traffic spikes where:
-
-- `view_count >= 1,000`.
-- `robust_z_score >= 4`.
-
-| Column | Description |
+| Column | Meaning |
 | --- | --- |
-| `robust_z_score` | Robust log-space anomaly score used for the threshold. |
-| `trend_score` | Corresponding positive trend score. |
-| `alert_type` | Current alert type: `traffic_spike`. |
-| `alert_severity` | `high` at the configured threshold; `critical` at twice the threshold. |
-| `rolling_baseline_log_median`, `rolling_baseline_log_mad` | Robust baseline diagnostics. |
-| `rolling_baseline_avg`, `rolling_baseline_stddev` | Raw-space comparison diagnostics only. |
-| `growth_rate` | Nullable prior-hour growth feature. |
+| `view_count` | Traffic at forecast origin. |
+| `lag_1h_views`, `lag_24h_views` | Exact completed-grid lags. |
+| `rolling_forecast_avg` | Mean of the previous configured completed hours. |
+| `forecast_history_elapsed_hours` | Completed rows available in the history window. |
+| `forecast_history_active_hours` | Those rows with `is_observed=true`. |
+| `mase_scale` | Past-only mean absolute lag-1 error for this series. |
+| `baseline_forecast` | lag-24, then rolling mean, then lag-1 fallback. |
+| `target_next_hour_views` | Next completed-grid hour; null only at dataset boundary. |
+| `forecast_available` | Whether the deterministic baseline is available. |
 
-The remaining dimension and timestamp columns have the same meanings as in
-`trending_pages`.
+### `forecast_evaluation`
 
-## `forecast_features`
+Methods are `baseline_forecast`, `lag_1h`, `lag_24h`, and `rolling_average`. Metrics are
+MASE, ND, sMAPE, and epsilon-stabilized msMAPE. The research protocol selects msMAPE as
+the primary relative metric, while retaining the others for diagnosis. RMSE, MSE, and
+ordinary MAPE are not part of this contract.
 
-Forecast features are generated per eligible topic and forecast-origin hour. The
-current implementation evaluates a one-hour horizon using observations strictly before
-the current feature timestamp.
+## LightGBM Outputs
 
-| Column | Description |
-| --- | --- |
-| `view_count` | Current observed topic traffic at the feature timestamp. |
-| `lag_1h_views` | Traffic from one hour before the feature timestamp. |
-| `lag_24h_views` | Traffic from 24 hours before the feature timestamp. |
-| `rolling_forecast_avg` | Mean of the previous six observed hours. |
-| `forecast_history_observed_hours` | Observed history count used by the forecast features. |
-| `baseline_forecast` | Fallback forecast: previous-day value, then rolling average, then previous-hour value. |
-| `forecast_horizon_hours` | Forecast horizon; currently `1`. |
-| `baseline_window_hours` | MASE scaling history window; currently `24`. |
-| `forecast_average_window_hours` | Rolling forecast window; currently `6`. |
-| `forecast_available` | Whether the baseline forecast is non-null. |
-| `target_next_hour_views` | Observed next-hour label for offline evaluation only. Never use it as a live input feature. |
+`lightgbm_predictions/predictions` stores every scored row with origin/forecast hour,
+raw model prediction, selected forecast, fallback reason, ranks, model version, feature
+availability, and actual label when available. It is partitioned by forecast date/hour,
+project, and access mode.
 
-## `forecast_evaluation`
+`research_top_pages` stores predicted-traffic and predicted-growth top `N` rows.
+`metrics` stores paired LightGBM/lag-1 plus operational traffic metrics.
+`ranking_metrics` stores coverage, NDCG@K, Recall@K, top-K Jaccard overlap, and Spearman
+rank correlation.
 
-The table evaluates four deterministic methods independently:
+## Reproducibility Artifacts
 
-- `baseline_forecast`
-- `lag_1h`
-- `lag_24h`
-- `rolling_average`
-
-| Column | Description |
-| --- | --- |
-| `forecast_method` | Forecast rule being evaluated. |
-| `evaluated_rows` | Rows with both an observed target and prediction. |
-| `mase_valid_rows` | Rows with a positive MASE scaling value. |
-| `mase` | Mean absolute scaled error using past one-step naive error. Lower is better; values below `1` outperform that naive scale. |
-| `nd` | Normalized deviation: total absolute error divided by total absolute actual traffic. |
-| `smape` | Symmetric absolute percentage error; zero/zero contributes zero. |
-| `msmape` | Epsilon-stabilized sMAPE for zero and low-volume denominators. Default epsilon is `1.0` view. |
-| `evaluation_start_hour`, `evaluation_end_hour` | Observed evaluation range. |
-
-No MAE, RMSE, or ordinary MAPE columns are part of the current evaluation contract.
-
-## Silver Quality Outputs
-
-`data/quarantine/pageviews` stores raw records rejected for structural or numeric
-quality failures, partitioned by `reject_reason`. The rejection record preserves the
-raw line, source file, parsed context, and raw numeric fields.
-
-`data/quarantine/pageviews_rejection_summary` stores compact rejection counts by
-`rejection_type`, `reject_reason`, date, hour, project, and source file. Out-of-scope
-projects are summarized here rather than copied into the raw-record quarantine.
+- `configs/pageview_download_plan.json`: intended Bronze acquisition window.
+- `artifacts/manifests/bronze_83h_snapshot.json`: current immutable source hashes.
+- `configs/forecast_experiment_protocol.json`: experiment design.
+- `configs/forecast_fold_manifest_v2.json`: fixed generated nested folds and holdout.
+- `artifacts/manifests/training_snapshot.json`: hashes of forecast Parquet and contracts;
+  created only after contract-v2 Gold is finalized.
+- `models/lightgbm/<version>/`: immutable model, category levels, and metadata.
 
 ## Inspection Notebooks
 
-- `notebooks/inspect_raw.ipynb`: immutable Bronze manifest, raw samples, and streamed raw quality checks.
-- `notebooks/inspect_silver.ipynb`: Silver schema, partitioned samples, missing/invalid checks, and DuckDB inspection.
-- `notebooks/inspect_gold.ipynb`: Gold schemas, trend/anomaly inspection, forecast inspection, and reconciliation checks.
+- `notebooks/inspect_raw.ipynb`
+- `notebooks/inspect_silver.ipynb`
+- `notebooks/inspect_gold.ipynb`
+- `notebooks/lightgbm_regression.ipynb`
+- `notebooks/inspect_lightgbm_predictions.ipynb`
+
+The existing LightGBM notebook is exploratory. Reportable contract-v2 training is run by
+`spark_jobs/train_lightgbm_nested.py` against the fixed manifest.

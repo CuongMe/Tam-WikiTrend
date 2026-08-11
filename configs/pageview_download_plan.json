@@ -1,0 +1,10 @@
+{
+  "plan_version": 1,
+  "plan_id": "wikitrend-2026-07-08-to-2026-08-05-utc",
+  "start_date": "2026-07-08",
+  "end_date": "2026-08-05",
+  "expected_hours": 696,
+  "output_dir": "data/raw/pageviews",
+  "manifest_path": "data/raw/pageviews_manifest.json",
+  "notes": "Four-plus complete UTC weeks including the target hour required by the seven-day holdout. Existing nonempty files are verified and skipped."
+}

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from wikitrend.pageviews import DEFAULT_SOURCE_PROJECTS
+
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
@@ -19,7 +21,7 @@ class Settings:
     env: str
     start_date: date
     end_date: date
-    project_allowlist: tuple[str, ...]
+    source_project_allowlist: tuple[str, ...]
     raw_dir: Path
     silver_dir: Path
     gold_dir: Path
@@ -28,15 +30,15 @@ class Settings:
     kafka_pageviews_topic: str
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         return cls(
             env=os.getenv("WIKITREND_ENV", "local"),
             start_date=_parse_date(os.getenv("WIKITREND_START_DATE", "2026-01-01")),
             end_date=_parse_date(os.getenv("WIKITREND_END_DATE", "2026-01-07")),
-            project_allowlist=_parse_csv(
+            source_project_allowlist=_parse_csv(
                 os.getenv(
-                    "WIKITREND_PROJECT_ALLOWLIST",
-                    "en,en.m,vi,vi.m,wikidata,commons,commons.m,commons.m.m",
+                    "WIKITREND_SOURCE_PROJECT_ALLOWLIST",
+                    ",".join(DEFAULT_SOURCE_PROJECTS),
                 )
             ),
             raw_dir=Path(os.getenv("WIKITREND_RAW_DIR", "data/raw/pageviews")),

@@ -1,85 +1,137 @@
 # Runbook
 
-## Local Checks
+## Verify Environment
 
 ```powershell
 conda activate wikitrend
-pip install -e ".[dev]"
-pytest
+java -version
+python -c "import pyspark, pandas, numpy; print(pyspark.__version__, pandas.__version__, numpy.__version__)"
 ruff check .
+pytest
 ```
 
-## Download Data
-
-Start with one hour before running the full 7-day scope:
+Use Java 17 from the conda environment. If system Java 26 wins on Windows:
 
 ```powershell
-python scripts/download_pageviews.py --start-date 2026-01-01 --end-date 2026-01-01 --hours 0
+$env:JAVA_HOME="$env:CONDA_PREFIX\Library"
+$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
+$env:PYSPARK_PYTHON="$env:CONDA_PREFIX\python.exe"
+$env:PYSPARK_DRIVER_PYTHON="$env:CONDA_PREFIX\python.exe"
 ```
 
-Then expand to the full configured range:
+## Acquire Bronze
+
+Preview only; this performs no network requests:
 
 ```powershell
-python scripts/download_pageviews.py
+python scripts/download_pageviews.py --plan configs/pageview_download_plan.json --dry-run
 ```
 
-## Build Tables
+Run the same command without `--dry-run` only when intentionally acquiring the
+multi-week experiment. Each file is written to `.part`, checked, hashed, then renamed.
+Do not use `--overwrite` unless a source correction has been verified independently.
+
+Inventory an existing manual snapshot:
 
 ```powershell
-spark-submit spark_jobs/parse_pageviews.py `
+python scripts/build_bronze_manifest.py `
+  --output artifacts/manifests/bronze_83h_snapshot.json
+```
+
+Add `--verify-gzip` for a full decompression/CRC audit; it is much slower than hashing.
+
+## Stage Silver And Gold
+
+Never write a new contract directly over trusted data. Use a unique staging root:
+
+```powershell
+$run = "contract-v2"
+$sources = "en,en.m,vi,vi.m,commons.m,commons.m.m,www.wd"
+
+python spark_jobs/parse_pageviews.py `
   --input data/raw/pageviews `
-  --output data/silver/pageviews `
-  --project-allowlist en,en.m,vi,vi.m,wikidata,commons,commons.m,commons.m.m `
-  --quarantine-output data/quarantine/pageviews `
-  --rejection-summary-output data/quarantine/pageviews_rejection_summary `
-  --mode overwrite
-```
+  --output "data/staging/$run/silver/pageviews" `
+  --project-allowlist $sources `
+  --quarantine-output "data/staging/$run/quarantine/pageviews" `
+  --rejection-summary-output "data/staging/$run/quarantine/pageviews_rejection_summary"
 
-The parser writes structurally invalid rows to the raw-record quarantine and writes
-compact counts for both quality rejections and out-of-scope projects to the rejection
-summary. Valid Silver rows include `normalization_status` for title-quality analysis.
-
-Validate the completed Silver write before building Gold:
-
-```powershell
 python scripts/validate_silver.py `
   --raw-dir data/raw/pageviews `
-  --silver-dir data/silver/pageviews `
-  --quarantine-dir data/quarantine/pageviews `
-  --rejection-summary-dir data/quarantine/pageviews_rejection_summary
+  --silver-dir "data/staging/$run/silver/pageviews" `
+  --quarantine-dir "data/staging/$run/quarantine/pageviews" `
+  --rejection-summary-dir "data/staging/$run/quarantine/pageviews_rejection_summary" `
+  --project-allowlist $sources
+
+python spark_jobs/build_gold_tables.py `
+  --silver "data/staging/$run/silver/pageviews" `
+  --gold "data/staging/$run/gold"
+python scripts/validate_gold.py --gold-dir "data/staging/$run/gold"
 ```
 
+Silver validation checks raw lineage, duplicate natural keys, required project coverage
+for every source hour, dimensions, partitions, and invalid values. Gold validation checks
+schemas, reconciliation, complete page-hour series, past-only eligibility, robust trend
+features, one-hour targets, and evaluation summaries.
+
+## Train LightGBM
+
+Training is blocked until the full planned window exists and staged contract-v2 Gold is
+published as the experiment snapshot.
+
 ```powershell
-spark-submit spark_jobs/build_gold_tables.py `
-  --silver data/silver/pageviews `
-  --gold data/gold
+python scripts/generate_forecast_manifest.py
+python scripts/build_snapshot_manifest.py
+python spark_jobs/train_lightgbm_nested.py
 ```
 
-Validate Gold before starting the API or dashboard. Forecast evaluation reports
-`MASE`, `ND`, `sMAPE`, and `msMAPE`; it does not use RMSE or MAE:
+Do not use `--allow-dirty-snapshot` for reportable results. Do not use
+`--allow-holdout-rerun` to tune against the same holdout. Collect new future data and
+move the holdout instead.
+
+## Score And Serve
+
+After a compatible versioned model exists:
 
 ```powershell
-python scripts/validate_gold.py `
-  --gold-dir data/gold `
-  --top-n 100 `
-  --baseline-hours 24
+python spark_jobs/score_lightgbm.py --top-n 100 --ranking-cutoffs 10,50,100
+python scripts/publish_serving_db.py
 ```
 
-## Start Services
+Scoring loads `models/lightgbm/current.json`, checks exact feature order/category levels,
+writes model and lag-1 fallback predictions, and reports paired traffic/ranking metrics
+when labels exist. The serving publisher creates a temporary DuckDB file and atomically
+replaces `data/serving/wikitrend.duckdb`.
+
+## Platform
 
 ```powershell
-docker compose -f infrastructure/docker-compose.yml up -d postgres minio kafka spark-master spark-worker
-```
-
-```powershell
+docker compose -f infrastructure/docker-compose.yml config --quiet
+docker compose -f infrastructure/docker-compose.yml up -d `
+  postgres minio minio-init kafka spark-master spark-worker
 docker compose -f infrastructure/docker-compose.yml up airflow-init
 docker compose -f infrastructure/docker-compose.yml up -d airflow-webserver airflow-scheduler
 ```
 
-## Common Issues
+Streaming replay:
 
-- If `spark-submit` is not found locally, install dependencies from `environment.yml`
-  or run Spark inside Docker.
-- If Airflow containers cannot write logs, set `AIRFLOW_UID=50000` in `.env`.
-- If Docker reports access denied reading Docker config, fix permissions on
-  `C:\Users\cuong\.docker\config.json` or run Docker from a shell with access.
+```powershell
+docker compose -f infrastructure/docker-compose.yml --profile stream up structured-streaming
+docker compose -f infrastructure/docker-compose.yml --profile stream run --rm kafka-replay
+```
+
+The replay is deterministic and idempotent, but the local topology is one broker and one
+Spark worker. It is an integration demonstration, not an HA deployment.
+
+## Recovery Rules
+
+- **Failed download:** keep the final `.gz` immutable; delete only the failed `.part` and
+  rerun the downloader.
+- **Failed staged validation:** inspect quarantine/report, fix code or source contract,
+  and rebuild a new staging run. Do not publish it.
+- **Failed Delta publication:** a versioned snapshot has no publication marker; leave it
+  for audit or remove it explicitly after confirming no reader points to it.
+- **Streaming checkpoint loss:** replay from earliest. Delta event-ID merges prevent
+  double counting.
+- **Holdout accidentally opened:** record the event and define a new future holdout.
+- **Docker config access denied:** repair access to
+  `C:\Users\cuong\.docker\config.json`; do not run the stack under an unrelated account.

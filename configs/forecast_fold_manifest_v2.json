@@ -1,0 +1,356 @@
+{
+  "manifest_version": 2,
+  "manifest_id": "wikitrend-4w-nested-v1",
+  "dataset": "data/gold/forecast_features",
+  "dataset_window": {
+    "start_hour": "2026-07-08T00:00:00",
+    "end_hour_exclusive": "2026-08-05T01:00:00"
+  },
+  "forecast_horizon_hours": 1,
+  "embargo_hours": 1,
+  "objective_candidates": [
+    "poisson",
+    "tweedie",
+    "regression_l1"
+  ],
+  "sampling": {
+    "method": "project_access_volume_stratified",
+    "max_training_rows": 500000,
+    "volume_bins": [
+      0,
+      1,
+      3,
+      10,
+      100,
+      1000,
+      1000000000
+    ],
+    "seed": 42
+  },
+  "ranking_cutoffs": [
+    10,
+    50,
+    100
+  ],
+  "block_bootstrap": {
+    "unit": "utc_day",
+    "resamples": 2000,
+    "confidence_level": 0.95,
+    "seed": 42
+  },
+  "outer_blocks": [
+    {
+      "block_id": "outer_000",
+      "training_start_hour": "2026-07-08T00:00:00",
+      "training_end_hour_exclusive": "2026-07-22T00:00:00",
+      "evaluation_start_hour": "2026-07-22T01:00:00",
+      "evaluation_end_hour_exclusive": "2026-07-23T01:00:00",
+      "inner_blocks": [
+        {
+          "block_id": "outer_000_inner_000",
+          "training_start_hour": "2026-07-08T00:00:00",
+          "training_end_hour_exclusive": "2026-07-15T00:00:00",
+          "evaluation_start_hour": "2026-07-15T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-16T01:00:00"
+        },
+        {
+          "block_id": "outer_000_inner_001",
+          "training_start_hour": "2026-07-09T00:00:00",
+          "training_end_hour_exclusive": "2026-07-16T00:00:00",
+          "evaluation_start_hour": "2026-07-16T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-17T01:00:00"
+        },
+        {
+          "block_id": "outer_000_inner_002",
+          "training_start_hour": "2026-07-10T00:00:00",
+          "training_end_hour_exclusive": "2026-07-17T00:00:00",
+          "evaluation_start_hour": "2026-07-17T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-18T01:00:00"
+        },
+        {
+          "block_id": "outer_000_inner_003",
+          "training_start_hour": "2026-07-11T00:00:00",
+          "training_end_hour_exclusive": "2026-07-18T00:00:00",
+          "evaluation_start_hour": "2026-07-18T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-19T01:00:00"
+        },
+        {
+          "block_id": "outer_000_inner_004",
+          "training_start_hour": "2026-07-12T00:00:00",
+          "training_end_hour_exclusive": "2026-07-19T00:00:00",
+          "evaluation_start_hour": "2026-07-19T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-20T01:00:00"
+        },
+        {
+          "block_id": "outer_000_inner_005",
+          "training_start_hour": "2026-07-13T00:00:00",
+          "training_end_hour_exclusive": "2026-07-20T00:00:00",
+          "evaluation_start_hour": "2026-07-20T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-21T01:00:00"
+        }
+      ]
+    },
+    {
+      "block_id": "outer_001",
+      "training_start_hour": "2026-07-09T00:00:00",
+      "training_end_hour_exclusive": "2026-07-23T00:00:00",
+      "evaluation_start_hour": "2026-07-23T01:00:00",
+      "evaluation_end_hour_exclusive": "2026-07-24T01:00:00",
+      "inner_blocks": [
+        {
+          "block_id": "outer_001_inner_000",
+          "training_start_hour": "2026-07-09T00:00:00",
+          "training_end_hour_exclusive": "2026-07-16T00:00:00",
+          "evaluation_start_hour": "2026-07-16T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-17T01:00:00"
+        },
+        {
+          "block_id": "outer_001_inner_001",
+          "training_start_hour": "2026-07-10T00:00:00",
+          "training_end_hour_exclusive": "2026-07-17T00:00:00",
+          "evaluation_start_hour": "2026-07-17T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-18T01:00:00"
+        },
+        {
+          "block_id": "outer_001_inner_002",
+          "training_start_hour": "2026-07-11T00:00:00",
+          "training_end_hour_exclusive": "2026-07-18T00:00:00",
+          "evaluation_start_hour": "2026-07-18T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-19T01:00:00"
+        },
+        {
+          "block_id": "outer_001_inner_003",
+          "training_start_hour": "2026-07-12T00:00:00",
+          "training_end_hour_exclusive": "2026-07-19T00:00:00",
+          "evaluation_start_hour": "2026-07-19T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-20T01:00:00"
+        },
+        {
+          "block_id": "outer_001_inner_004",
+          "training_start_hour": "2026-07-13T00:00:00",
+          "training_end_hour_exclusive": "2026-07-20T00:00:00",
+          "evaluation_start_hour": "2026-07-20T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-21T01:00:00"
+        },
+        {
+          "block_id": "outer_001_inner_005",
+          "training_start_hour": "2026-07-14T00:00:00",
+          "training_end_hour_exclusive": "2026-07-21T00:00:00",
+          "evaluation_start_hour": "2026-07-21T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-22T01:00:00"
+        }
+      ]
+    },
+    {
+      "block_id": "outer_002",
+      "training_start_hour": "2026-07-10T00:00:00",
+      "training_end_hour_exclusive": "2026-07-24T00:00:00",
+      "evaluation_start_hour": "2026-07-24T01:00:00",
+      "evaluation_end_hour_exclusive": "2026-07-25T01:00:00",
+      "inner_blocks": [
+        {
+          "block_id": "outer_002_inner_000",
+          "training_start_hour": "2026-07-10T00:00:00",
+          "training_end_hour_exclusive": "2026-07-17T00:00:00",
+          "evaluation_start_hour": "2026-07-17T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-18T01:00:00"
+        },
+        {
+          "block_id": "outer_002_inner_001",
+          "training_start_hour": "2026-07-11T00:00:00",
+          "training_end_hour_exclusive": "2026-07-18T00:00:00",
+          "evaluation_start_hour": "2026-07-18T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-19T01:00:00"
+        },
+        {
+          "block_id": "outer_002_inner_002",
+          "training_start_hour": "2026-07-12T00:00:00",
+          "training_end_hour_exclusive": "2026-07-19T00:00:00",
+          "evaluation_start_hour": "2026-07-19T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-20T01:00:00"
+        },
+        {
+          "block_id": "outer_002_inner_003",
+          "training_start_hour": "2026-07-13T00:00:00",
+          "training_end_hour_exclusive": "2026-07-20T00:00:00",
+          "evaluation_start_hour": "2026-07-20T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-21T01:00:00"
+        },
+        {
+          "block_id": "outer_002_inner_004",
+          "training_start_hour": "2026-07-14T00:00:00",
+          "training_end_hour_exclusive": "2026-07-21T00:00:00",
+          "evaluation_start_hour": "2026-07-21T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-22T01:00:00"
+        },
+        {
+          "block_id": "outer_002_inner_005",
+          "training_start_hour": "2026-07-15T00:00:00",
+          "training_end_hour_exclusive": "2026-07-22T00:00:00",
+          "evaluation_start_hour": "2026-07-22T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-23T01:00:00"
+        }
+      ]
+    },
+    {
+      "block_id": "outer_003",
+      "training_start_hour": "2026-07-11T00:00:00",
+      "training_end_hour_exclusive": "2026-07-25T00:00:00",
+      "evaluation_start_hour": "2026-07-25T01:00:00",
+      "evaluation_end_hour_exclusive": "2026-07-26T01:00:00",
+      "inner_blocks": [
+        {
+          "block_id": "outer_003_inner_000",
+          "training_start_hour": "2026-07-11T00:00:00",
+          "training_end_hour_exclusive": "2026-07-18T00:00:00",
+          "evaluation_start_hour": "2026-07-18T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-19T01:00:00"
+        },
+        {
+          "block_id": "outer_003_inner_001",
+          "training_start_hour": "2026-07-12T00:00:00",
+          "training_end_hour_exclusive": "2026-07-19T00:00:00",
+          "evaluation_start_hour": "2026-07-19T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-20T01:00:00"
+        },
+        {
+          "block_id": "outer_003_inner_002",
+          "training_start_hour": "2026-07-13T00:00:00",
+          "training_end_hour_exclusive": "2026-07-20T00:00:00",
+          "evaluation_start_hour": "2026-07-20T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-21T01:00:00"
+        },
+        {
+          "block_id": "outer_003_inner_003",
+          "training_start_hour": "2026-07-14T00:00:00",
+          "training_end_hour_exclusive": "2026-07-21T00:00:00",
+          "evaluation_start_hour": "2026-07-21T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-22T01:00:00"
+        },
+        {
+          "block_id": "outer_003_inner_004",
+          "training_start_hour": "2026-07-15T00:00:00",
+          "training_end_hour_exclusive": "2026-07-22T00:00:00",
+          "evaluation_start_hour": "2026-07-22T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-23T01:00:00"
+        },
+        {
+          "block_id": "outer_003_inner_005",
+          "training_start_hour": "2026-07-16T00:00:00",
+          "training_end_hour_exclusive": "2026-07-23T00:00:00",
+          "evaluation_start_hour": "2026-07-23T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-24T01:00:00"
+        }
+      ]
+    },
+    {
+      "block_id": "outer_004",
+      "training_start_hour": "2026-07-12T00:00:00",
+      "training_end_hour_exclusive": "2026-07-26T00:00:00",
+      "evaluation_start_hour": "2026-07-26T01:00:00",
+      "evaluation_end_hour_exclusive": "2026-07-27T01:00:00",
+      "inner_blocks": [
+        {
+          "block_id": "outer_004_inner_000",
+          "training_start_hour": "2026-07-12T00:00:00",
+          "training_end_hour_exclusive": "2026-07-19T00:00:00",
+          "evaluation_start_hour": "2026-07-19T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-20T01:00:00"
+        },
+        {
+          "block_id": "outer_004_inner_001",
+          "training_start_hour": "2026-07-13T00:00:00",
+          "training_end_hour_exclusive": "2026-07-20T00:00:00",
+          "evaluation_start_hour": "2026-07-20T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-21T01:00:00"
+        },
+        {
+          "block_id": "outer_004_inner_002",
+          "training_start_hour": "2026-07-14T00:00:00",
+          "training_end_hour_exclusive": "2026-07-21T00:00:00",
+          "evaluation_start_hour": "2026-07-21T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-22T01:00:00"
+        },
+        {
+          "block_id": "outer_004_inner_003",
+          "training_start_hour": "2026-07-15T00:00:00",
+          "training_end_hour_exclusive": "2026-07-22T00:00:00",
+          "evaluation_start_hour": "2026-07-22T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-23T01:00:00"
+        },
+        {
+          "block_id": "outer_004_inner_004",
+          "training_start_hour": "2026-07-16T00:00:00",
+          "training_end_hour_exclusive": "2026-07-23T00:00:00",
+          "evaluation_start_hour": "2026-07-23T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-24T01:00:00"
+        },
+        {
+          "block_id": "outer_004_inner_005",
+          "training_start_hour": "2026-07-17T00:00:00",
+          "training_end_hour_exclusive": "2026-07-24T00:00:00",
+          "evaluation_start_hour": "2026-07-24T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-25T01:00:00"
+        }
+      ]
+    },
+    {
+      "block_id": "outer_005",
+      "training_start_hour": "2026-07-13T00:00:00",
+      "training_end_hour_exclusive": "2026-07-27T00:00:00",
+      "evaluation_start_hour": "2026-07-27T01:00:00",
+      "evaluation_end_hour_exclusive": "2026-07-28T01:00:00",
+      "inner_blocks": [
+        {
+          "block_id": "outer_005_inner_000",
+          "training_start_hour": "2026-07-13T00:00:00",
+          "training_end_hour_exclusive": "2026-07-20T00:00:00",
+          "evaluation_start_hour": "2026-07-20T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-21T01:00:00"
+        },
+        {
+          "block_id": "outer_005_inner_001",
+          "training_start_hour": "2026-07-14T00:00:00",
+          "training_end_hour_exclusive": "2026-07-21T00:00:00",
+          "evaluation_start_hour": "2026-07-21T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-22T01:00:00"
+        },
+        {
+          "block_id": "outer_005_inner_002",
+          "training_start_hour": "2026-07-15T00:00:00",
+          "training_end_hour_exclusive": "2026-07-22T00:00:00",
+          "evaluation_start_hour": "2026-07-22T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-23T01:00:00"
+        },
+        {
+          "block_id": "outer_005_inner_003",
+          "training_start_hour": "2026-07-16T00:00:00",
+          "training_end_hour_exclusive": "2026-07-23T00:00:00",
+          "evaluation_start_hour": "2026-07-23T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-24T01:00:00"
+        },
+        {
+          "block_id": "outer_005_inner_004",
+          "training_start_hour": "2026-07-17T00:00:00",
+          "training_end_hour_exclusive": "2026-07-24T00:00:00",
+          "evaluation_start_hour": "2026-07-24T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-25T01:00:00"
+        },
+        {
+          "block_id": "outer_005_inner_005",
+          "training_start_hour": "2026-07-18T00:00:00",
+          "training_end_hour_exclusive": "2026-07-25T00:00:00",
+          "evaluation_start_hour": "2026-07-25T01:00:00",
+          "evaluation_end_hour_exclusive": "2026-07-26T01:00:00"
+        }
+      ]
+    }
+  ],
+  "final_holdout": {
+    "training_start_hour": "2026-07-14T23:00:00",
+    "training_end_hour_exclusive": "2026-07-28T23:00:00",
+    "evaluation_start_hour": "2026-07-29T00:00:00",
+    "evaluation_end_hour_exclusive": "2026-08-05T00:00:00",
+    "untouched": true
+  }
+}

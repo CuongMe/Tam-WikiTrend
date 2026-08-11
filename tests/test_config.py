@@ -7,5 +7,5 @@ def test_default_settings() -> None:
     settings = Settings.from_env()
     assert settings.start_date.isoformat() == "2026-01-01"
     assert settings.end_date.isoformat() == "2026-01-07"
-    assert "en" in settings.project_allowlist
-
+    assert "en" in settings.source_project_allowlist
+    assert "www.wd" in settings.source_project_allowlist

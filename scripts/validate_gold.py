@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import duckdb
@@ -102,7 +103,7 @@ REQUIRED_COLUMNS = {
         "lag_1h_views",
         "lag_24h_views",
         "rolling_forecast_avg",
-        "forecast_history_observed_hours",
+        "forecast_history_elapsed_hours",
         "baseline_forecast",
         "forecast_horizon_hours",
         "baseline_window_hours",
@@ -124,7 +125,46 @@ REQUIRED_COLUMNS = {
         "evaluation_start_hour",
         "evaluation_end_hour",
     },
+    "modeling_page_hourly": {
+        "timestamp_hour",
+        "date",
+        "hour",
+        "source_project",
+        "project",
+        "language",
+        "project_family",
+        "access_mode",
+        "page_title",
+        "normalized_title",
+        "is_observed",
+        "view_count",
+        "response_size",
+        "page_rows",
+        "eligibility_history_views",
+        "eligibility_observed_hours",
+        "eligible_at_origin",
+    },
 }
+
+DIMENSION_COLUMNS = {
+    "source_project",
+    "project",
+    "language",
+    "project_family",
+    "access_mode",
+}
+for _table in REQUIRED_COLUMNS:
+    if _table != "modeling_page_hourly":
+        REQUIRED_COLUMNS[_table].update(DIMENSION_COLUMNS)
+REQUIRED_COLUMNS["forecast_features"].update(
+    {
+        "is_observed",
+        "forecast_history_active_hours",
+        "mase_scale",
+        "eligibility_history_views",
+        "eligibility_observed_hours",
+    }
+)
 
 OPTIONALLY_EMPTY = {"anomaly_alerts"}
 
@@ -148,7 +188,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gold-dir", type=Path, default=Path("data/gold"))
     parser.add_argument("--top-n", type=int, default=100)
     parser.add_argument("--baseline-hours", type=int, default=24)
-    parser.add_argument("--allowed-projects", default="en,en.m,vi,vi.m,commons.m,commons.m.m")
+    parser.add_argument("--allowed-projects", default="en,vi,commons,wikidata")
+    parser.add_argument("--report-output", type=Path)
+    parser.add_argument("--memory-limit", default="6GB")
+    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument(
+        "--temp-dir",
+        type=Path,
+        default=Path("data/temp/duckdb_validation/gold"),
+    )
     return parser.parse_args()
 
 
@@ -167,7 +215,13 @@ def main() -> None:
         "failures": failures,
     }
     if any(table_files[table] for table in REQUIRED_COLUMNS if table not in OPTIONALLY_EMPTY):
+        args.temp_dir.mkdir(parents=True, exist_ok=True)
         con = duckdb.connect()
+        con.execute(f"SET memory_limit='{args.memory_limit}'")
+        con.execute(f"SET threads={args.threads}")
+        con.execute("SET preserve_insertion_order=false")
+        escaped_temp = args.temp_dir.resolve().as_posix().replace("'", "''")
+        con.execute(f"SET temp_directory='{escaped_temp}'")
         try:
             schema_report: dict[str, object] = {}
             for table, files in table_files.items():
@@ -219,9 +273,10 @@ def main() -> None:
                 f"""
                 SELECT count(*)
                 FROM (
-                    SELECT date, hour, project, normalized_title, count(*) AS rows
+                    SELECT date, hour, project, access_mode, normalized_title,
+                           count(*) AS rows
                     FROM read_parquet('{page_source}')
-                    GROUP BY 1, 2, 3, 4
+                    GROUP BY 1, 2, 3, 4, 5
                     HAVING count(*) > 1
                 )
                 """
@@ -229,21 +284,21 @@ def main() -> None:
             traffic_reconciliation = con.execute(
                 f"""
                 WITH page_totals AS (
-                    SELECT date, hour, project,
+                    SELECT date, hour, project, access_mode,
                            sum(view_count) AS view_count,
                            sum(response_size) AS response_size
                     FROM read_parquet('{page_source}')
-                    GROUP BY 1, 2, 3
+                    GROUP BY 1, 2, 3, 4
                 ), traffic AS (
-                    SELECT date, hour, project,
+                    SELECT date, hour, project, access_mode,
                            sum(view_count) AS view_count,
                            sum(response_size) AS response_size
                     FROM read_parquet('{traffic_source}')
-                    GROUP BY 1, 2, 3
+                    GROUP BY 1, 2, 3, 4
                 )
                 SELECT count(*)
                 FROM page_totals p
-                FULL OUTER JOIN traffic t USING (date, hour, project)
+                FULL OUTER JOIN traffic t USING (date, hour, project, access_mode)
                 WHERE p.view_count IS NULL OR t.view_count IS NULL
                    OR p.view_count <> t.view_count
                    OR p.response_size <> t.response_size
@@ -279,6 +334,8 @@ def main() -> None:
                 failures.append("hourly_project_traffic does not reconcile to page_hourly")
             if not project_values.issubset(allowed_projects):
                 failures.append("Gold contains projects outside the configured allowlist")
+            if allowed_projects - project_values:
+                failures.append("Gold is missing required canonical projects")
 
             top_source = table_glob(args.gold_dir, "top_pages_hourly")
             top_metrics = con.execute(
@@ -291,7 +348,7 @@ def main() -> None:
                     count(*) - count(
                         DISTINCT concat(
                             cast(date AS VARCHAR), '|', cast(hour AS VARCHAR), '|',
-                            project, '|', normalized_title
+                            project, '|', access_mode, '|', normalized_title
                         )
                     ) AS duplicate_keys
                 FROM read_parquet('{top_source}')
@@ -304,6 +361,43 @@ def main() -> None:
             }
             if top_metrics[1] or top_metrics[2]:
                 failures.append("top_pages_hourly contains invalid ranks or duplicate keys")
+
+            modeling_source = table_glob(args.gold_dir, "modeling_page_hourly")
+            modeling_metrics = con.execute(
+                f"""
+                WITH source AS (
+                    SELECT * FROM read_parquet('{modeling_source}')
+                ), expected AS (
+                    SELECT count(DISTINCT timestamp_hour) AS hours FROM source
+                ), topic_hours AS (
+                    SELECT project, access_mode, normalized_title, count(*) AS hours
+                    FROM source
+                    GROUP BY 1, 2, 3
+                )
+                SELECT
+                    (SELECT count(*) FROM source) AS rows,
+                    (SELECT hours FROM expected) AS expected_hours,
+                    sum(CASE WHEN topic_hours.hours <> expected.hours THEN 1 ELSE 0 END)
+                        AS incomplete_topics,
+                    (SELECT count(*) FROM source WHERE view_count < 0 OR response_size < 0)
+                        AS invalid_values,
+                    (SELECT count(*) FROM source
+                     WHERE eligible_at_origin
+                       AND (eligibility_history_views IS NULL
+                            OR eligibility_observed_hours IS NULL))
+                        AS invalid_eligibility
+                FROM topic_hours CROSS JOIN expected
+                """
+            ).fetchone()
+            report["modeling_page_hourly_metrics"] = {
+                "rows": modeling_metrics[0],
+                "expected_hours_per_topic": modeling_metrics[1],
+                "incomplete_topics": modeling_metrics[2],
+                "invalid_values": modeling_metrics[3],
+                "invalid_eligibility": modeling_metrics[4],
+            }
+            if any(modeling_metrics[2:]):
+                failures.append("modeling_page_hourly violates the complete-series contract")
 
             trends_source = table_glob(args.gold_dir, "trending_pages")
             trend_metrics = con.execute(
@@ -368,7 +462,15 @@ def main() -> None:
                             WHEN target_next_hour_views IS NOT NULL AND target_next_hour_views < 0
                             THEN 1 ELSE 0
                         END
-                    ) AS invalid_targets
+                    ) AS invalid_targets,
+                    sum(
+                        CASE
+                            WHEN timestamp_hour < (SELECT max(timestamp_hour)
+                                                   FROM read_parquet('{forecast_source}'))
+                              AND target_next_hour_views IS NULL
+                            THEN 1 ELSE 0
+                        END
+                    ) AS missing_targets_before_boundary
                 FROM read_parquet('{forecast_source}')
                 """
             ).fetchone()
@@ -377,8 +479,9 @@ def main() -> None:
                 "invalid_horizon": forecast_metrics[1],
                 "invalid_forecasts": forecast_metrics[2],
                 "invalid_targets": forecast_metrics[3],
+                "missing_targets_before_boundary": forecast_metrics[4],
             }
-            if forecast_metrics[1] or forecast_metrics[2] or forecast_metrics[3]:
+            if any(forecast_metrics[1:]):
                 failures.append("forecast_features contains invalid values")
 
             evaluation_source = table_glob(args.gold_dir, "forecast_evaluation")
@@ -413,7 +516,13 @@ def main() -> None:
             con.close()
 
     report["failures"] = failures
-    print(json.dumps(report, indent=2, default=str))
+    rendered = json.dumps(report, indent=2, default=str) + "\n"
+    if args.report_output:
+        args.report_output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = args.report_output.with_suffix(args.report_output.suffix + ".part")
+        temporary.write_text(rendered, encoding="utf-8")
+        os.replace(temporary, args.report_output)
+    print(rendered, end="")
     raise SystemExit(1 if failures else 0)
 
 

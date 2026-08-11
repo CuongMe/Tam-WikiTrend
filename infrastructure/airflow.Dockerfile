@@ -10,7 +10,7 @@ USER airflow
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-COPY pyproject.toml README.md /tmp/wikitrend/
+COPY requirements.lock pyproject.toml README.md /tmp/wikitrend/
 COPY src /tmp/wikitrend/src
-RUN pip install --no-cache-dir -e /tmp/wikitrend
-
+RUN pip install --no-cache-dir -r /tmp/wikitrend/requirements.lock \
+    && pip install --no-cache-dir --no-deps -e /tmp/wikitrend

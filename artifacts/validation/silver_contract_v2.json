@@ -1,0 +1,130 @@
+{
+  "raw_gz_files": 83,
+  "raw_date_hours": 83,
+  "invalid_raw_manifest_paths": [],
+  "silver_parquet_files": 581,
+  "silver_partitions": 581,
+  "silver_date_hours": 83,
+  "missing_date_hours": [],
+  "unexpected_date_hours": [],
+  "raw_files_missing_from_silver": [],
+  "silver_files_missing_from_raw": [],
+  "lineage_mismatches": [],
+  "silver_projects": [
+    "commons",
+    "en",
+    "vi",
+    "wikidata"
+  ],
+  "silver_source_projects": [
+    "commons.m",
+    "commons.m.m",
+    "en",
+    "en.m",
+    "vi",
+    "vi.m",
+    "www.wd"
+  ],
+  "silver_access_modes": [
+    "desktop",
+    "mobile"
+  ],
+  "unexpected_projects": [],
+  "missing_requested_projects": [],
+  "missing_requested_source_projects": [],
+  "missing_source_project_hours": [],
+  "unexpected_source_project_hours": [],
+  "missing_required_columns": [],
+  "metrics": {
+    "rows": 196943981,
+    "dates": 4,
+    "hours": 24,
+    "projects": 4,
+    "source_projects": 7,
+    "invalid_views": 0,
+    "invalid_response_sizes": 0,
+    "missing_page_titles": 0,
+    "blank_normalized_titles": 67,
+    "missing_source_files": 0
+  },
+  "duplicate_metrics": {
+    "duplicate_keys": 0,
+    "rows_in_duplicate_keys": 0,
+    "excess_rows": 0
+  },
+  "normalization_status": [
+    {
+      "status": "blank_normalized_title",
+      "rows": 67
+    },
+    {
+      "status": "malformed_percent_escape_recovered",
+      "rows": 7906
+    },
+    {
+      "status": "normalized",
+      "rows": 196936008
+    }
+  ],
+  "rows_by_project": [
+    {
+      "source_project": "commons.m",
+      "project": "commons",
+      "access_mode": "desktop",
+      "rows": 7891036,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    },
+    {
+      "source_project": "commons.m.m",
+      "project": "commons",
+      "access_mode": "mobile",
+      "rows": 2100831,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    },
+    {
+      "source_project": "en",
+      "project": "en",
+      "access_mode": "desktop",
+      "rows": 85139060,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    },
+    {
+      "source_project": "en.m",
+      "project": "en",
+      "access_mode": "mobile",
+      "rows": 93852758,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    },
+    {
+      "source_project": "vi",
+      "project": "vi",
+      "access_mode": "desktop",
+      "rows": 1419323,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    },
+    {
+      "source_project": "vi.m",
+      "project": "vi",
+      "access_mode": "mobile",
+      "rows": 1546151,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    },
+    {
+      "source_project": "www.wd",
+      "project": "wikidata",
+      "access_mode": "desktop",
+      "rows": 4994822,
+      "first_date": "2026-08-01",
+      "last_date": "2026-08-04"
+    }
+  ],
+  "quarantine_parquet_files": 0,
+  "rejection_summary_parquet_files": 4,
+  "failures": []
+}

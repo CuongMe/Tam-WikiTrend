@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import argparse
 
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Filter Silver Parquet to selected Wikimedia project codes.")
+    parser = argparse.ArgumentParser(
+        description="Filter Silver Parquet to selected Wikimedia project codes."
+    )
     parser.add_argument("--input", required=True, help="Input Silver Parquet directory.")
     parser.add_argument("--output", required=True, help="Output Silver Parquet directory.")
-    parser.add_argument("--projects", required=True, help="Comma-separated exact project codes to keep.")
+    parser.add_argument(
+        "--projects",
+        required=True,
+        help="Comma-separated exact project codes to keep.",
+    )
     parser.add_argument("--mode", default="overwrite", choices=["overwrite", "append"])
     return parser.parse_args()
 

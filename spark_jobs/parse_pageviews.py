@@ -2,18 +2,40 @@ from __future__ import annotations
 
 import argparse
 import glob
+import sys
 from pathlib import Path
 
+from pyspark import StorageLevel
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-DUPLICATE_KEY_COLUMNS = ("date", "hour", "project", "page_title")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from wikitrend.pageviews import PROJECT_CODE_MAP, SUPPORTED_SOURCE_PROJECTS
+
+DUPLICATE_KEY_COLUMNS = (
+    "date",
+    "hour",
+    "source_project",
+    "project",
+    "access_mode",
+    "page_title",
+)
 
 
 def parse_project_allowlist(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _project_dimension_map(attribute: str) -> F.Column:
+    entries: list[F.Column] = []
+    for source_project, dimensions in PROJECT_CODE_MAP.items():
+        entries.extend(
+            [F.lit(source_project), F.lit(getattr(dimensions, attribute)).cast("string")]
+        )
+    return F.create_map(*entries)
 
 
 def resolve_input_paths(input_path: str) -> list[str]:
@@ -41,7 +63,7 @@ def _build_parsed_rows(
             F.col("value").alias("raw_line"),
             F.col("source_file"),
             F.size(parts).alias("part_count"),
-            parts.getItem(0).alias("project"),
+            parts.getItem(0).alias("source_project"),
             parts.getItem(1).alias("page_title"),
             parts.getItem(2).alias("view_count_raw"),
             parts.getItem(3).alias("response_size_raw"),
@@ -75,7 +97,8 @@ def _build_parsed_rows(
     quality_reasons = [
         F.when(F.col("part_count") != 4, F.lit("wrong_field_count")),
         F.when(
-            (F.col("part_count") == 4) & (F.col("project").isNull() | (F.trim("project") == "")),
+            (F.col("part_count") == 4)
+            & (F.col("source_project").isNull() | (F.trim("source_project") == "")),
             F.lit("missing_project"),
         ),
         F.when(
@@ -101,31 +124,25 @@ def _build_parsed_rows(
         .drop("_quality_reject_reason_raw")
     )
 
-    if project_allowlist:
-        parsed = parsed.withColumn(
-            "_scope_reject_reason",
-            F.when(
-                F.col("_quality_reject_reason").isNull()
-                & F.col("project").isNotNull()
-                & (F.trim("project") != "")
-                & ~F.col("project").isin(project_allowlist),
-                F.lit("out_of_scope_project"),
-            ),
-        )
-    else:
-        parsed = parsed.withColumn("_scope_reject_reason", F.lit(None).cast("string"))
-
-    project_base = F.split(F.col("project"), r"\.").getItem(0)
+    allowed_projects = project_allowlist or list(SUPPORTED_SOURCE_PROJECTS)
     parsed = parsed.withColumn(
-        "language", F.when(project_base.rlike(r"^[a-z][a-z0-9-]{1,11}$"), project_base)
-    ).withColumn(
-        "project_family",
-        F.when(project_base == "commons", F.lit("commons"))
-        .when(project_base == "wikidata", F.lit("wikidata"))
-        .when(project_base == "meta", F.lit("meta"))
-        .when(project_base == "species", F.lit("wikispecies"))
-        .when(F.col("language").isNotNull(), F.lit("wikipedia"))
-        .otherwise(F.lit("other")),
+        "_scope_reject_reason",
+        F.when(
+            F.col("_quality_reject_reason").isNull()
+            & F.col("source_project").isNotNull()
+            & (F.trim("source_project") != "")
+            & ~F.col("source_project").isin(allowed_projects),
+            F.lit("out_of_scope_project"),
+        ),
+    )
+
+    parsed = (
+        parsed.withColumn("project", _project_dimension_map("project")[F.col("source_project")])
+        .withColumn("language", _project_dimension_map("language")[F.col("source_project")])
+        .withColumn(
+            "project_family", _project_dimension_map("project_family")[F.col("source_project")]
+        )
+        .withColumn("access_mode", _project_dimension_map("access_mode")[F.col("source_project")])
     )
 
     malformed_percent_escape = F.col("page_title").rlike(r"%(?![0-9A-Fa-f]{2})")
@@ -159,9 +176,11 @@ def _silver_columns(parsed: DataFrame) -> DataFrame:
     return parsed.select(
         "date",
         "hour",
+        "source_project",
         "project",
         "language",
         "project_family",
+        "access_mode",
         "page_title",
         "normalized_title",
         "normalization_status",
@@ -188,7 +207,9 @@ def build_quality_quarantine(parsed: DataFrame) -> DataFrame:
         "source_file",
         "date",
         "hour",
+        "source_project",
         "project",
+        "access_mode",
         "page_title",
         "view_count_raw",
         "response_size_raw",
@@ -204,10 +225,21 @@ def build_rejection_summary(parsed: DataFrame) -> DataFrame:
             F.col("_quality_reject_reason").alias("reject_reason"),
             "date",
             "hour",
+            "source_project",
             "project",
+            "access_mode",
             "source_file",
         )
-        .groupBy("rejection_type", "reject_reason", "date", "hour", "project", "source_file")
+        .groupBy(
+            "rejection_type",
+            "reject_reason",
+            "date",
+            "hour",
+            "source_project",
+            "project",
+            "access_mode",
+            "source_file",
+        )
         .count()
         .withColumnRenamed("count", "row_count")
     )
@@ -219,10 +251,21 @@ def build_rejection_summary(parsed: DataFrame) -> DataFrame:
             F.col("_scope_reject_reason").alias("reject_reason"),
             "date",
             "hour",
+            "source_project",
             "project",
+            "access_mode",
             "source_file",
         )
-        .groupBy("rejection_type", "reject_reason", "date", "hour", "project", "source_file")
+        .groupBy(
+            "rejection_type",
+            "reject_reason",
+            "date",
+            "hour",
+            "source_project",
+            "project",
+            "access_mode",
+            "source_file",
+        )
         .count()
         .withColumnRenamed("count", "row_count")
     )
@@ -243,7 +286,9 @@ def assert_no_duplicate_keys(silver: DataFrame, quarantine_output: str, mode: st
         "source_file",
         "date",
         "hour",
+        "source_project",
         "project",
+        "access_mode",
         "page_title",
         F.col("view_count").cast("string").alias("view_count_raw"),
         F.col("response_size").cast("string").alias("response_size_raw"),
@@ -262,7 +307,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input", required=True, help="Input `.gz` glob or directory.")
     parser.add_argument("--output", required=True, help="Output Silver Parquet directory.")
-    parser.add_argument("--project-allowlist", help="Comma-separated project codes to keep.")
+    parser.add_argument(
+        "--project-allowlist",
+        help="Comma-separated Wikimedia source domain codes to keep.",
+    )
     parser.add_argument(
         "--quarantine-output",
         default="data/quarantine/pageviews",
@@ -274,7 +322,16 @@ def parse_args() -> argparse.Namespace:
         help="Parquet output for rejection counts, including out-of-scope projects.",
     )
     parser.add_argument("--mode", default="overwrite", choices=["overwrite", "append"])
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.project_allowlist:
+        requested = set(parse_project_allowlist(args.project_allowlist))
+        unsupported = requested - set(SUPPORTED_SOURCE_PROJECTS)
+        if unsupported:
+            parser.error(
+                "--project-allowlist contains unsupported source codes: "
+                + ", ".join(sorted(unsupported))
+            )
+    return args
 
 
 def main() -> None:
@@ -284,6 +341,7 @@ def main() -> None:
         .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
         .getOrCreate()
     )
+    spark.sparkContext.setLogLevel("WARN")
     project_allowlist = parse_project_allowlist(args.project_allowlist)
     parsed = _build_parsed_rows(spark, args.input, project_allowlist)
     quality_quarantine = build_quality_quarantine(parsed)
@@ -292,7 +350,7 @@ def main() -> None:
         parsed.filter(F.col("_quality_reject_reason").isNull()).filter(
             F.col("_scope_reject_reason").isNull()
         )
-    )
+    ).persist(StorageLevel.DISK_ONLY)
 
     quality_quarantine.write.mode(args.mode).partitionBy("reject_reason").parquet(
         args.quarantine_output
@@ -300,8 +358,14 @@ def main() -> None:
     rejection_summary.write.mode(args.mode).partitionBy("rejection_type").parquet(
         args.rejection_summary_output
     )
-    silver.write.mode(args.mode).partitionBy("date", "hour", "project").parquet(args.output)
-    spark.stop()
+    try:
+        assert_no_duplicate_keys(silver, args.quarantine_output, args.mode)
+        silver.write.mode(args.mode).partitionBy(
+            "date", "hour", "project", "access_mode"
+        ).parquet(args.output)
+    finally:
+        silver.unpersist()
+        spark.stop()
 
 
 if __name__ == "__main__":

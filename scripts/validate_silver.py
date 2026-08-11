@@ -2,30 +2,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import sys
 from datetime import date
 from pathlib import Path
 
 import duckdb
 
-PROJECTS = {
-    "en",
-    "en.m",
-    "vi",
-    "vi.m",
-    "wikidata",
-    "commons",
-    "commons.m",
-    "commons.m.m",
-}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from wikitrend.pageviews import DEFAULT_SOURCE_PROJECTS, PROJECT_CODE_MAP
+
 RAW_PATTERN = re.compile(r"pageviews-(\d{8})-(\d{2})0000\.gz$")
-PARTITION_PATTERN = re.compile(r"date=(\d{4}-\d{2}-\d{2})/hour=(\d+)/project=([^/]+)$")
+PARTITION_PATTERN = re.compile(
+    r"date=(\d{4}-\d{2}-\d{2})/hour=(\d+)/project=([^/]+)/access_mode=([^/]+)$"
+)
 REQUIRED_COLUMNS = {
     "date",
     "hour",
+    "source_project",
     "project",
     "language",
     "project_family",
+    "access_mode",
     "page_title",
     "normalized_title",
     "normalization_status",
@@ -49,8 +49,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--project-allowlist",
-        default=",".join(sorted(PROJECTS)),
-        help="Comma-separated expected projects.",
+        default=",".join(DEFAULT_SOURCE_PROJECTS),
+        help="Comma-separated required Wikimedia source domain codes.",
+    )
+    parser.add_argument("--report-output", type=Path)
+    parser.add_argument("--memory-limit", default="6GB")
+    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument(
+        "--temp-dir",
+        type=Path,
+        default=Path("data/temp/duckdb_validation/silver"),
     )
     return parser.parse_args()
 
@@ -83,15 +91,17 @@ def discover_raw_manifest(raw_dir: Path) -> tuple[dict[str, tuple[str, int]], li
     return manifest, invalid_paths
 
 
-def discover_partitions(silver_dir: Path) -> set[tuple[str, int, str]]:
-    partitions: set[tuple[str, int, str]] = set()
+def discover_partitions(silver_dir: Path) -> set[tuple[str, int, str, str]]:
+    partitions: set[tuple[str, int, str, str]] = set()
     for path in silver_dir.rglob("*"):
         if not path.is_dir():
             continue
         relative = path.relative_to(silver_dir).as_posix()
         match = PARTITION_PATTERN.fullmatch(relative)
         if match:
-            partitions.add((match.group(1), int(match.group(2)), match.group(3)))
+            partitions.add(
+                (match.group(1), int(match.group(2)), match.group(3), match.group(4))
+            )
     return partitions
 
 
@@ -101,17 +111,31 @@ def source_basename(source_file: str) -> str:
 
 def main() -> None:
     args = parse_args()
-    expected_projects = parse_allowlist(args.project_allowlist)
+    expected_source_projects = parse_allowlist(args.project_allowlist)
+    unsupported = expected_source_projects - set(PROJECT_CODE_MAP)
+    if unsupported:
+        raise ValueError(f"Unknown Wikimedia source project codes: {sorted(unsupported)}")
+    expected_projects = {
+        PROJECT_CODE_MAP[source_project].project
+        for source_project in expected_source_projects
+    }
     raw_manifest, invalid_raw_paths = discover_raw_manifest(args.raw_dir)
     raw_files = set(raw_manifest)
     raw_hours = set(raw_manifest.values())
     partitions = discover_partitions(args.silver_dir)
-    partition_hours = {(date_value, hour) for date_value, hour, _ in partitions}
-    partition_projects = {project for _, _, project in partitions}
+    partition_hours = {(date_value, hour) for date_value, hour, _, _ in partitions}
+    partition_projects = {project for _, _, project, _ in partitions}
+    partition_access_modes = {access_mode for _, _, _, access_mode in partitions}
 
     silver_glob = (args.silver_dir / "**" / "*.parquet").as_posix()
     source = f"read_parquet('{silver_glob}', hive_partitioning=true)"
+    args.temp_dir.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
+    con.execute(f"SET memory_limit='{args.memory_limit}'")
+    con.execute(f"SET threads={args.threads}")
+    con.execute("SET preserve_insertion_order=false")
+    escaped_temp = args.temp_dir.resolve().as_posix().replace("'", "''")
+    con.execute(f"SET temp_directory='{escaped_temp}'")
     schema_rows = con.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
     silver_columns = {row[0] for row in schema_rows}
     metrics = con.execute(
@@ -121,6 +145,7 @@ def main() -> None:
             count(DISTINCT date) AS dates,
             count(DISTINCT hour) AS hours,
             count(DISTINCT project) AS projects,
+            count(DISTINCT source_project) AS source_projects,
             sum(CASE WHEN view_count IS NULL OR view_count < 0 THEN 1 ELSE 0 END) AS invalid_views,
             sum(
                 CASE WHEN response_size IS NULL OR response_size < 0 THEN 1 ELSE 0 END
@@ -139,10 +164,11 @@ def main() -> None:
     ).fetchone()
     project_rows = con.execute(
         f"""
-        SELECT project, count(*) AS rows, min(date) AS first_date, max(date) AS last_date
+        SELECT source_project, project, access_mode, count(*) AS rows,
+               min(date) AS first_date, max(date) AS last_date
         FROM {source}
-        GROUP BY project
-        ORDER BY project
+        GROUP BY source_project, project, access_mode
+        ORDER BY source_project
         """
     ).fetchall()
     normalization_rows = con.execute(
@@ -156,9 +182,10 @@ def main() -> None:
     duplicate_metrics = con.execute(
         f"""
         WITH duplicate_keys AS (
-            SELECT date, hour, project, page_title, count(*) AS rows_for_key
+            SELECT date, hour, source_project, project, access_mode, page_title,
+                   count(*) AS rows_for_key
             FROM {source}
-            GROUP BY date, hour, project, page_title
+            GROUP BY date, hour, source_project, project, access_mode, page_title
             HAVING count(*) > 1
         )
         SELECT
@@ -169,7 +196,25 @@ def main() -> None:
         """
     ).fetchone()
     lineage_rows = con.execute(f"SELECT DISTINCT source_file, date, hour FROM {source}").fetchall()
+    source_projects_found = {
+        str(row[0])
+        for row in con.execute(f"SELECT DISTINCT source_project FROM {source}").fetchall()
+    }
+    source_project_hours = {
+        (str(row[0]), int(row[1]), str(row[2]))
+        for row in con.execute(
+            f"SELECT DISTINCT date, hour, source_project FROM {source}"
+        ).fetchall()
+    }
     con.close()
+
+    expected_source_project_hours = {
+        (date_value, hour_value, source_project)
+        for date_value, hour_value in raw_hours
+        for source_project in expected_source_projects
+    }
+    missing_source_project_hours = expected_source_project_hours - source_project_hours
+    unexpected_source_project_hours = source_project_hours - expected_source_project_hours
 
     source_file_names = {source_basename(str(row[0])) for row in lineage_rows}
     lineage_mismatches = []
@@ -194,6 +239,7 @@ def main() -> None:
         "dates",
         "hours",
         "projects",
+        "source_projects",
         "invalid_views",
         "invalid_response_sizes",
         "missing_page_titles",
@@ -210,6 +256,16 @@ def main() -> None:
         failures.append("Silver partitions have no raw manifest date-hour")
     if partition_projects - expected_projects:
         failures.append("unexpected project partitions found")
+    if expected_projects - partition_projects:
+        failures.append("required canonical project partitions are missing")
+    if expected_source_projects - source_projects_found:
+        failures.append("required source projects are missing from Silver")
+    if missing_source_project_hours:
+        failures.append("required source projects are missing from one or more raw hours")
+    if unexpected_source_project_hours:
+        failures.append("unexpected source project/hour combinations found")
+    if partition_access_modes - {"desktop", "mobile"}:
+        failures.append("invalid access-mode partitions found")
     if raw_files - source_file_names:
         failures.append("raw manifest files missing from Silver source lineage")
     if source_file_names - raw_files:
@@ -244,8 +300,15 @@ def main() -> None:
         "silver_files_missing_from_raw": sorted(source_file_names - raw_files),
         "lineage_mismatches": lineage_mismatches,
         "silver_projects": sorted(partition_projects),
+        "silver_source_projects": sorted(source_projects_found),
+        "silver_access_modes": sorted(partition_access_modes),
         "unexpected_projects": sorted(partition_projects - expected_projects),
         "missing_requested_projects": sorted(expected_projects - partition_projects),
+        "missing_requested_source_projects": sorted(
+            expected_source_projects - source_projects_found
+        ),
+        "missing_source_project_hours": sorted(missing_source_project_hours),
+        "unexpected_source_project_hours": sorted(unexpected_source_project_hours),
         "missing_required_columns": sorted(REQUIRED_COLUMNS - silver_columns),
         "metrics": metric_values,
         "duplicate_metrics": dict(
@@ -259,14 +322,27 @@ def main() -> None:
             {"status": status, "rows": rows} for status, rows in normalization_rows
         ],
         "rows_by_project": [
-            {"project": project, "rows": rows, "first_date": first_date, "last_date": last_date}
-            for project, rows, first_date, last_date in project_rows
+            {
+                "source_project": source_project,
+                "project": project,
+                "access_mode": access_mode,
+                "rows": rows,
+                "first_date": first_date,
+                "last_date": last_date,
+            }
+            for source_project, project, access_mode, rows, first_date, last_date in project_rows
         ],
         "quarantine_parquet_files": len(list(args.quarantine_dir.rglob("*.parquet"))),
         "rejection_summary_parquet_files": len(list(args.rejection_summary_dir.rglob("*.parquet"))),
         "failures": failures,
     }
-    print(json.dumps(result, indent=2, default=str))
+    rendered = json.dumps(result, indent=2, default=str) + "\n"
+    if args.report_output:
+        args.report_output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = args.report_output.with_suffix(args.report_output.suffix + ".part")
+        temporary.write_text(rendered, encoding="utf-8")
+        os.replace(temporary, args.report_output)
+    print(rendered, end="")
     if failures:
         raise SystemExit(1)
 

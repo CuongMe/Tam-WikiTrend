@@ -9,13 +9,16 @@ description = "Local Wikimedia content-demand lakehouse for trend, anomaly, and 
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "duckdb>=1.1.0",
-  "fastapi>=0.115.0",
-  "kafka-python>=2.0.0",
-  "pandas>=2.2.0",
-  "pandera>=0.22.0",
-  "pyarrow>=18.0.0",
-  "pyspark>=4.0.0",
+  "delta-spark>=4.0,<4.1",
+  "duckdb>=1.1.0,<2",
+  "fastapi>=0.115.0,<1",
+  "kafka-python>=2.0.0,<3",
+  "lightgbm>=4.5.0,<5",
+  "numpy>=2.0,<2.3",
+  "pandas>=2.2.0,<3",
+  "pandera>=0.22.0,<1",
+  "pyarrow>=18.0.0,<19",
+  "pyspark>=4.0.0,<4.1",
   "python-dotenv>=1.0.0",
   "requests>=2.32.0",
   "scikit-learn>=1.6.0",
@@ -34,12 +37,16 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
+markers = [
+  "integration: local service or Spark integration coverage",
+  "kafka_integration: requires a Kafka broker on localhost:9094",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-

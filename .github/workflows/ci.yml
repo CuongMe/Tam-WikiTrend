@@ -12,12 +12,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.lock
+          pip install --no-deps -e .
       - name: Lint
         run: ruff check .
       - name: Test
         run: pytest
-
+      - name: Spark and API integration tests
+        run: pytest --run-integration tests/integration/test_gold_contract.py tests/integration/test_api_serving.py
+      - name: Start Kafka
+        run: docker compose -f infrastructure/docker-compose.yml up -d kafka
+      - name: Kafka integration test
+        run: pytest --run-integration --run-kafka-integration tests/integration/test_kafka_transport.py
+      - name: Stop integration services
+        if: always()
+        run: docker compose -f infrastructure/docker-compose.yml down --volumes

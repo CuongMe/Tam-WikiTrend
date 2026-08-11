@@ -28,6 +28,9 @@ derby.log
 data/
 warehouse/
 mlruns/
+models/artifacts/
+models/lightgbm/
+.hadoop/
 
 # Runtime logs
 logs/
