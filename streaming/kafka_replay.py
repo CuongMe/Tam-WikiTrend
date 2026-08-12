@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _json_default(value: Any) -> str:
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, date | datetime):
         return value.isoformat()
     raise TypeError(f"Cannot serialize {type(value).__name__} to JSON")
 

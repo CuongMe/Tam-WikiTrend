@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 
-from airflow.operators.bash import BashOperator
-
 from airflow import DAG
+from airflow.operators.bash import BashOperator
 
 PROJECT_HOME = os.environ.get("WIKITREND_PROJECT_HOME", "/opt/wikitrend")
 DOWNLOAD_PLAN = os.environ.get(
