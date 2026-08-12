@@ -8,6 +8,7 @@ java -version
 python -c "import pyspark, pandas, numpy; print(pyspark.__version__, pandas.__version__, numpy.__version__)"
 ruff check .
 pytest
+python -m pip check
 ```
 
 Use Java 17 from the conda environment. If system Java 26 wins on Windows:
@@ -72,6 +73,10 @@ Silver validation checks raw lineage, duplicate natural keys, required project c
 for every source hour, dimensions, partitions, and invalid values. Gold validation checks
 schemas, reconciliation, complete page-hour series, past-only eligibility, robust trend
 features, one-hour targets, and evaluation summaries.
+
+`spark_jobs/build_gold_tables.py` is the only supported Gold construction path. Rebuild
+the complete staged Gold snapshot and validate it; do not overwrite individual trend,
+anomaly, feature, or evaluation tables in place.
 
 ## Train LightGBM
 
