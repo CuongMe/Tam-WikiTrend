@@ -8,8 +8,10 @@ import logging
 import os
 import sys
 from collections.abc import Iterable
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from time import sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -49,7 +51,12 @@ def validate_gzip(path: Path) -> None:
             pass
 
 
-def download_file(url: str, destination: Path, overwrite: bool = False) -> tuple[bool, int, str]:
+def download_file(
+    url: str,
+    destination: Path,
+    overwrite: bool = False,
+    timeout_seconds: float = 120,
+) -> tuple[bool, int, str]:
     if destination.exists() and destination.stat().st_size > 0 and not overwrite:
         LOGGER.info("skip existing file path=%s size=%s", destination, destination.stat().st_size)
         return False, destination.stat().st_size, sha256_file(destination)
@@ -58,7 +65,7 @@ def download_file(url: str, destination: Path, overwrite: bool = False) -> tuple
     partial = destination.with_suffix(destination.suffix + ".part")
     request = Request(url, headers={"User-Agent": "WikiTrend local data engineering project"})
     LOGGER.info("download url=%s path=%s", url, destination)
-    with urlopen(request, timeout=120) as response:
+    with urlopen(request, timeout=timeout_seconds) as response:
         expected_size = int(response.headers.get("Content-Length", 0))
         digest = hashlib.sha256()
         bytes_written = 0
@@ -79,6 +86,36 @@ def download_file(url: str, destination: Path, overwrite: bool = False) -> tuple
     validate_gzip(partial)
     os.replace(partial, destination)
     return True, bytes_written, digest.hexdigest()
+
+
+def download_with_retries(
+    urls: list[str],
+    destination: Path,
+    overwrite: bool,
+    max_attempts: int,
+    backoff_seconds: float,
+    timeout_seconds: float,
+) -> tuple[bool, int, str, str]:
+    for attempt in range(1, max_attempts + 1):
+        url = urls[(attempt - 1) % len(urls)]
+        try:
+            downloaded, size_bytes, sha256 = download_file(
+                url, destination, overwrite, timeout_seconds
+            )
+            return downloaded, size_bytes, sha256, url
+        except (HTTPError, URLError, TimeoutError, RuntimeError, OSError):
+            if attempt == max_attempts:
+                raise
+            delay = backoff_seconds * attempt
+            LOGGER.warning(
+                "download retry url=%s attempt=%s/%s delay_seconds=%s",
+                url,
+                attempt + 1,
+                max_attempts,
+                delay,
+            )
+            sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def load_download_plan(path: Path) -> dict[str, Any]:
@@ -125,6 +162,89 @@ def write_manifest(path: Path, plan_id: str, files: dict[str, dict[str, Any]]) -
     os.replace(temporary, path)
 
 
+def retain_manifest_scope(
+    manifest: dict[str, dict[str, Any]], expected_filenames: set[str]
+) -> dict[str, dict[str, Any]]:
+    """Remove entries outside the active acquisition plan."""
+    return {
+        filename: record
+        for filename, record in manifest.items()
+        if filename in expected_filenames
+    }
+
+
+def validate_plan_overrides(
+    *,
+    plan: Path | None,
+    start_date: date | None,
+    end_date: date | None,
+    output_dir: Path | None,
+    hours: str | None,
+) -> None:
+    """Keep a versioned acquisition plan immutable at the command line."""
+    if plan is None:
+        return
+    overrides = [
+        name
+        for name, value in (
+            ("--start-date", start_date),
+            ("--end-date", end_date),
+            ("--output-dir", output_dir),
+            ("--hours", hours),
+        )
+        if value is not None
+    ]
+    if overrides:
+        raise ValueError(
+            "--plan defines the complete acquisition scope; remove these overrides: "
+            + ", ".join(overrides)
+        )
+
+
+def resolve_download_workers(plan: dict[str, Any], requested: int | None) -> int:
+    workers = requested if requested is not None else int(plan.get("download_workers", 1))
+    if not 1 <= workers <= 8:
+        raise ValueError("Download workers must be between 1 and 8")
+    return workers
+
+
+def resolve_download_attempts(plan: dict[str, Any], requested: int | None) -> int:
+    attempts = requested if requested is not None else int(plan.get("download_attempts", 3))
+    if not 1 <= attempts <= 5:
+        raise ValueError("Download attempts must be between 1 and 5")
+    return attempts
+
+
+def resolve_download_timeout(plan: dict[str, Any], requested: float | None) -> float:
+    timeout = (
+        requested
+        if requested is not None
+        else float(plan.get("download_timeout_seconds", 30))
+    )
+    if not 5 <= timeout <= 300:
+        raise ValueError("Download timeout must be between 5 and 300 seconds")
+    return timeout
+
+
+def resolve_base_urls(plan: dict[str, Any]) -> list[str]:
+    configured = plan.get("base_urls")
+    if configured is None:
+        configured = [plan["base_url"]] if plan.get("base_url") else []
+    if not isinstance(configured, list):
+        raise ValueError("Download base_urls must be a list")
+    base_urls = list(dict.fromkeys(str(value).rstrip("/") for value in configured))
+    if any(not url.startswith("https://") for url in base_urls):
+        raise ValueError("Every download base URL must use HTTPS")
+    return base_urls
+
+
+def rotate_base_urls(base_urls: list[str], offset_seed: int) -> list[str]:
+    if not base_urls:
+        return []
+    offset = offset_seed % len(base_urls)
+    return base_urls[offset:] + base_urls[:offset]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Download official Wikimedia hourly pageview dumps."
@@ -132,9 +252,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", type=date.fromisoformat)
     parser.add_argument("--end-date", type=date.fromisoformat)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--plan", type=Path, help="Versioned multi-week acquisition plan.")
+    parser.add_argument("--plan", type=Path, help="Versioned bounded acquisition plan.")
     parser.add_argument("--manifest", type=Path, help="Override the Bronze SHA-256 manifest path.")
     parser.add_argument("--hours", help="Optional comma-separated UTC hours, for example 0,1,2.")
+    parser.add_argument("--workers", type=int, help="Concurrent downloads; defaults to the plan.")
+    parser.add_argument("--attempts", type=int, help="Attempts per file; defaults to the plan.")
+    parser.add_argument(
+        "--timeout-seconds", type=float, help="Socket inactivity timeout; defaults to the plan."
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -144,6 +269,13 @@ def main() -> int:
     configure_logging()
     settings = get_settings()
     args = parse_args()
+    validate_plan_overrides(
+        plan=args.plan,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        output_dir=args.output_dir,
+        hours=args.hours,
+    )
 
     plan = load_download_plan(args.plan) if args.plan else {}
     start_date = args.start_date or (
@@ -159,6 +291,10 @@ def main() -> int:
         plan.get("manifest_path", "data/raw/pageviews_manifest.json")
     )
     plan_id = str(plan.get("plan_id", f"manual-{start_date}-{end_date}"))
+    base_urls = resolve_base_urls(plan)
+    workers = resolve_download_workers(plan, args.workers)
+    attempts = resolve_download_attempts(plan, args.attempts)
+    timeout_seconds = resolve_download_timeout(plan, args.timeout_seconds)
     hours = {int(item) for item in args.hours.split(",")} if args.hours else None
     if hours is not None and not hours.issubset(set(range(24))):
         raise ValueError("--hours must contain UTC hour values from 0 through 23")
@@ -172,6 +308,10 @@ def main() -> int:
                     "hours": len(timestamps),
                     "existing_files": existing,
                     "files_to_download": len(timestamps) - existing,
+                    "download_workers": workers,
+                    "download_attempts": attempts,
+                    "download_timeout_seconds": timeout_seconds,
+                    "base_urls": base_urls,
                     "output_dir": str(output_dir),
                     "manifest_path": str(manifest_path),
                 },
@@ -183,36 +323,69 @@ def main() -> int:
     downloaded = 0
     skipped = 0
     failed = 0
-    manifest = load_manifest(manifest_path)
-    for timestamp_utc in timestamps:
-        url = pageviews_url(timestamp_utc)
-        destination = raw_file_path(output_dir, timestamp_utc)
-        try:
-            was_downloaded, size_bytes, sha256 = download_file(
-                url, destination, overwrite=args.overwrite
+    expected_filenames = {
+        raw_file_path(output_dir, timestamp_utc).name
+        for timestamp_utc in timestamps
+    }
+    manifest = retain_manifest_scope(load_manifest(manifest_path), expected_filenames)
+    jobs: dict[Future[tuple[bool, int, str, str]], tuple[datetime, list[str], Path]] = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bronze-download") as pool:
+        for index, timestamp_utc in enumerate(timestamps):
+            ordered_base_urls = rotate_base_urls(base_urls, index)
+            urls = (
+                [
+                    pageviews_url(timestamp_utc, base_url)
+                    for base_url in ordered_base_urls
+                ]
+                if ordered_base_urls
+                else [pageviews_url(timestamp_utc)]
             )
-            previous = manifest.get(destination.name)
-            if previous and not args.overwrite:
-                if previous.get("size_bytes") != size_bytes or previous.get("sha256") != sha256:
-                    raise RuntimeError(
-                        f"Immutable Bronze file changed since manifest publication: {destination}"
-                    )
-            manifest[destination.name] = {
-                "filename": destination.name,
-                "timestamp_hour": timestamp_utc.isoformat(),
-                "relative_path": destination.relative_to(output_dir).as_posix(),
-                "source_url": url,
-                "size_bytes": size_bytes,
-                "sha256": sha256,
-            }
-            write_manifest(manifest_path, plan_id, manifest)
-            if was_downloaded:
-                downloaded += 1
-            else:
-                skipped += 1
-        except (HTTPError, URLError, TimeoutError, RuntimeError) as exc:
-            failed += 1
-            LOGGER.exception("download failed url=%s error=%s", url, exc)
+            destination = raw_file_path(output_dir, timestamp_utc)
+            future = pool.submit(
+                download_with_retries,
+                urls,
+                destination,
+                args.overwrite,
+                attempts,
+                2.0,
+                timeout_seconds,
+            )
+            jobs[future] = (timestamp_utc, urls, destination)
+
+        for future in as_completed(jobs):
+            timestamp_utc, urls, destination = jobs[future]
+            try:
+                was_downloaded, size_bytes, sha256, source_url = future.result()
+                previous = manifest.get(destination.name)
+                if previous and not args.overwrite:
+                    if (
+                        previous.get("size_bytes") != size_bytes
+                        or previous.get("sha256") != sha256
+                    ):
+                        raise RuntimeError(
+                            "Immutable Bronze file changed since manifest publication: "
+                            f"{destination}"
+                        )
+                manifest[destination.name] = {
+                    "filename": destination.name,
+                    "timestamp_hour": timestamp_utc.isoformat(),
+                    "relative_path": destination.relative_to(output_dir).as_posix(),
+                    "source_url": (
+                        previous.get("source_url", source_url)
+                        if previous and not was_downloaded
+                        else source_url
+                    ),
+                    "size_bytes": size_bytes,
+                    "sha256": sha256,
+                }
+                write_manifest(manifest_path, plan_id, manifest)
+                if was_downloaded:
+                    downloaded += 1
+                else:
+                    skipped += 1
+            except (HTTPError, URLError, TimeoutError, RuntimeError, OSError) as exc:
+                failed += 1
+                LOGGER.exception("download failed urls=%s error=%s", urls, exc)
 
     LOGGER.info(
         "summary plan=%s downloaded=%s skipped=%s failed=%s manifest=%s",

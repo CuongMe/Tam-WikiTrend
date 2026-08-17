@@ -63,14 +63,16 @@ def parse_dump_filename(filename: str) -> tuple[str, int]:
     return f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}", int(match.group("hour"))
 
 
-def pageviews_url(timestamp_utc: datetime) -> str:
+def pageviews_url(
+    timestamp_utc: datetime, base_url: str = PAGEVIEWS_BASE_URL
+) -> str:
     if timestamp_utc.tzinfo is None:
         timestamp_utc = timestamp_utc.replace(tzinfo=UTC)
     timestamp_utc = timestamp_utc.astimezone(UTC)
     year = timestamp_utc.strftime("%Y")
     month = timestamp_utc.strftime("%Y-%m")
     filename = timestamp_utc.strftime("pageviews-%Y%m%d-%H0000.gz")
-    return f"{PAGEVIEWS_BASE_URL}/{year}/{month}/{filename}"
+    return f"{base_url.rstrip('/')}/{year}/{month}/{filename}"
 
 
 def normalize_title(raw_title: str) -> str:

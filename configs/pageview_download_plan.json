@@ -1,10 +1,18 @@
 {
   "plan_version": 1,
-  "plan_id": "wikitrend-2026-07-08-to-2026-08-05-utc",
-  "start_date": "2026-07-08",
-  "end_date": "2026-08-05",
-  "expected_hours": 696,
+  "plan_id": "wikitrend-2026-01-01-to-2026-01-07-utc",
+  "start_date": "2026-01-01",
+  "end_date": "2026-01-07",
+  "expected_hours": 168,
+  "base_urls": [
+    "https://ftp.acc.umu.se/mirror/wikimedia.org/other/pageviews",
+    "https://dumps.wikimedia.your.org/other/pageviews",
+    "https://dumps.wikimedia.org/other/pageviews"
+  ],
+  "download_workers": 4,
+  "download_attempts": 3,
+  "download_timeout_seconds": 30,
   "output_dir": "data/raw/pageviews",
   "manifest_path": "data/raw/pageviews_manifest.json",
-  "notes": "Four-plus complete UTC weeks including the target hour required by the seven-day holdout. Existing nonempty files are verified and skipped."
+  "notes": "Fixed seven-day resume dataset from a Wikimedia-listed mirror. Existing nonempty files are hash-verified and skipped."
 }

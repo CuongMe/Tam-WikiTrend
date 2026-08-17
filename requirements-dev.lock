@@ -1,4 +1,0 @@
-# Development overlay for Python 3.11.
--r requirements.lock
-pytest==8.3.4
-ruff==0.8.4
