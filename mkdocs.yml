@@ -1,0 +1,29 @@
+site_name: WikiTrend
+site_description: Local Wikimedia pageview acquisition and analytics workspace.
+repo_name: Tâm-WikiTrend
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: teal
+
+nav:
+  - Overview: index.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true

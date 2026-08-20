@@ -42,9 +42,13 @@ class Settings:
                 )
             ),
             raw_dir=Path(os.getenv("WIKITREND_RAW_DIR", "data/raw/pageviews")),
-            silver_dir=Path(os.getenv("WIKITREND_SILVER_DIR", "data/silver/pageviews")),
-            gold_dir=Path(os.getenv("WIKITREND_GOLD_DIR", "data/gold")),
-            serving_db=Path(os.getenv("WIKITREND_SERVING_DB", "data/serving/wikitrend.duckdb")),
+            silver_dir=Path(
+                os.getenv("WIKITREND_SILVER_DIR", "data/processed/silver/pageviews")
+            ),
+            gold_dir=Path(os.getenv("WIKITREND_GOLD_DIR", "data/processed/gold")),
+            serving_db=Path(
+                os.getenv("WIKITREND_SERVING_DB", "data/processed/serving/wikitrend.duckdb")
+            ),
             kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094"),
             kafka_pageviews_topic=os.getenv("KAFKA_PAGEVIEWS_TOPIC", "wikitrend.pageviews"),
         )
