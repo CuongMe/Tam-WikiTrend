@@ -1,18 +1,19 @@
 {
   "plan_version": 1,
-  "plan_id": "wikitrend-2026-01-01-to-2026-01-07-utc",
+  "plan_id": "wikitrend-2026-01-01-to-2026-01-03-utc",
   "start_date": "2026-01-01",
-  "end_date": "2026-01-07",
-  "expected_hours": 168,
+  "end_date": "2026-01-03",
+  "expected_hours": 72,
   "base_urls": [
     "https://ftp.acc.umu.se/mirror/wikimedia.org/other/pageviews",
     "https://dumps.wikimedia.your.org/other/pageviews",
     "https://dumps.wikimedia.org/other/pageviews"
   ],
-  "download_workers": 4,
+  "download_workers": 8,
   "download_attempts": 3,
   "download_timeout_seconds": 30,
+  "trust_manifest_on_resume": true,
   "output_dir": "data/raw/pageviews",
   "manifest_path": "data/raw/pageviews_manifest.json",
-  "notes": "Fixed seven-day resume dataset from a Wikimedia-listed mirror. Existing nonempty files are hash-verified and skipped."
+  "notes": "Fixed 72-hour dataset from Wikimedia-listed mirrors. Existing nonempty files with matching manifest size are trusted and skipped unless --verify-existing is used."
 }

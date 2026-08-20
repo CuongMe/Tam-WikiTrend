@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.download_pageviews import (
+from wikitrend.cli.download_pageviews import (
     download_file,
     download_with_retries,
     iter_hours,
     load_download_plan,
+    load_manifest,
     resolve_base_urls,
     resolve_download_attempts,
     resolve_download_timeout,
@@ -50,6 +51,27 @@ def test_load_download_plan_rejects_incorrect_expected_hours(tmp_path) -> None:
         load_download_plan(plan_path)
 
 
+def test_load_manifest_accepts_utf8_bom(tmp_path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "pageviews-20260101-000000.gz",
+                        "sha256": "a" * 64,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8-sig",
+    )
+
+    manifest = load_manifest(manifest_path)
+
+    assert set(manifest) == {"pageviews-20260101-000000.gz"}
+
+
 def test_download_file_hashes_existing_bronze_without_network(tmp_path) -> None:
     destination = tmp_path / "pageviews-20260801-000000.gz"
     with gzip.open(destination, "wb") as handle:
@@ -62,6 +84,32 @@ def test_download_file_hashes_existing_bronze_without_network(tmp_path) -> None:
     assert was_downloaded is False
     assert size_bytes == destination.stat().st_size
     assert len(sha256) == 64
+
+
+def test_download_file_can_trust_existing_manifest_without_hashing(
+    monkeypatch, tmp_path
+) -> None:
+    destination = tmp_path / "pageviews-20260801-000000.gz"
+    with gzip.open(destination, "wb") as handle:
+        handle.write(b"en Main_Page 1 10\n")
+
+    def fail_hash(_path):
+        raise AssertionError("existing file should not be hashed")
+
+    monkeypatch.setattr("wikitrend.cli.download_pageviews.sha256_file", fail_hash)
+    expected_sha256 = "a" * 64
+
+    was_downloaded, size_bytes, sha256 = download_file(
+        "https://example.invalid/not-requested.gz",
+        destination,
+        expected_size_bytes=destination.stat().st_size,
+        expected_sha256=expected_sha256,
+        trust_existing_manifest=True,
+    )
+
+    assert was_downloaded is False
+    assert size_bytes == destination.stat().st_size
+    assert sha256 == expected_sha256
 
 
 def test_retain_manifest_scope_removes_old_plan_entries() -> None:
@@ -132,7 +180,15 @@ def test_download_retries_transient_failure(monkeypatch, tmp_path) -> None:
     calls = 0
     called_urls = []
 
-    def flaky_download(url, _destination, _overwrite, _timeout_seconds):
+    def flaky_download(
+        url,
+        _destination,
+        _overwrite,
+        _timeout_seconds,
+        _expected_size_bytes=None,
+        _expected_sha256=None,
+        _trust_existing_manifest=False,
+    ):
         nonlocal calls
         calls += 1
         called_urls.append(url)
@@ -140,7 +196,7 @@ def test_download_retries_transient_failure(monkeypatch, tmp_path) -> None:
             raise TimeoutError("temporary")
         return True, 10, "abc"
 
-    monkeypatch.setattr("scripts.download_pageviews.download_file", flaky_download)
+    monkeypatch.setattr("wikitrend.cli.download_pageviews.download_file", flaky_download)
 
     assert download_with_retries(
         [

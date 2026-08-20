@@ -16,14 +16,16 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
 from wikitrend.config import get_settings
 from wikitrend.logging_utils import configure_logging
 from wikitrend.pageviews import pageviews_url
 from wikitrend.storage import ensure_parent, raw_file_path
 
-LOGGER = logging.getLogger("wikitrend.download_pageviews")
+LOGGER = logging.getLogger("wikitrend.cli.download_pageviews")
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def iter_hours(
@@ -56,10 +58,25 @@ def download_file(
     destination: Path,
     overwrite: bool = False,
     timeout_seconds: float = 120,
+    expected_size_bytes: int | None = None,
+    expected_sha256: str | None = None,
+    trust_existing_manifest: bool = False,
 ) -> tuple[bool, int, str]:
     if destination.exists() and destination.stat().st_size > 0 and not overwrite:
-        LOGGER.info("skip existing file path=%s size=%s", destination, destination.stat().st_size)
-        return False, destination.stat().st_size, sha256_file(destination)
+        size_bytes = destination.stat().st_size
+        if (
+            trust_existing_manifest
+            and expected_size_bytes == size_bytes
+            and expected_sha256
+        ):
+            LOGGER.info(
+                "skip existing manifest-trusted file path=%s size=%s",
+                destination,
+                size_bytes,
+            )
+            return False, size_bytes, expected_sha256
+        LOGGER.info("skip existing file path=%s size=%s", destination, size_bytes)
+        return False, size_bytes, sha256_file(destination)
 
     ensure_parent(destination)
     partial = destination.with_suffix(destination.suffix + ".part")
@@ -95,12 +112,21 @@ def download_with_retries(
     max_attempts: int,
     backoff_seconds: float,
     timeout_seconds: float,
+    expected_size_bytes: int | None = None,
+    expected_sha256: str | None = None,
+    trust_existing_manifest: bool = False,
 ) -> tuple[bool, int, str, str]:
     for attempt in range(1, max_attempts + 1):
         url = urls[(attempt - 1) % len(urls)]
         try:
             downloaded, size_bytes, sha256 = download_file(
-                url, destination, overwrite, timeout_seconds
+                url,
+                destination,
+                overwrite,
+                timeout_seconds,
+                expected_size_bytes,
+                expected_sha256,
+                trust_existing_manifest,
             )
             return downloaded, size_bytes, sha256, url
         except (HTTPError, URLError, TimeoutError, RuntimeError, OSError):
@@ -119,7 +145,7 @@ def download_with_retries(
 
 
 def load_download_plan(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_json(path)
     required = {"plan_id", "start_date", "end_date", "output_dir", "manifest_path"}
     missing = required - set(payload)
     if missing:
@@ -145,7 +171,7 @@ def load_download_plan(path: Path) -> dict[str, Any]:
 def load_manifest(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_json(path)
     return {item["filename"]: item for item in payload.get("files", [])}
 
 
@@ -260,6 +286,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--timeout-seconds", type=float, help="Socket inactivity timeout; defaults to the plan."
     )
+    parser.add_argument(
+        "--verify-existing",
+        action="store_true",
+        help="Hash existing files even when the manifest already records matching size and hash.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -295,6 +326,11 @@ def main() -> int:
     workers = resolve_download_workers(plan, args.workers)
     attempts = resolve_download_attempts(plan, args.attempts)
     timeout_seconds = resolve_download_timeout(plan, args.timeout_seconds)
+    trust_existing_manifest = (
+        bool(plan.get("trust_manifest_on_resume", False))
+        and not args.verify_existing
+        and not args.overwrite
+    )
     hours = {int(item) for item in args.hours.split(",")} if args.hours else None
     if hours is not None and not hours.issubset(set(range(24))):
         raise ValueError("--hours must contain UTC hour values from 0 through 23")
@@ -311,6 +347,7 @@ def main() -> int:
                     "download_workers": workers,
                     "download_attempts": attempts,
                     "download_timeout_seconds": timeout_seconds,
+                    "trust_manifest_on_resume": trust_existing_manifest,
                     "base_urls": base_urls,
                     "output_dir": str(output_dir),
                     "manifest_path": str(manifest_path),
@@ -341,6 +378,7 @@ def main() -> int:
                 else [pageviews_url(timestamp_utc)]
             )
             destination = raw_file_path(output_dir, timestamp_utc)
+            previous = manifest.get(destination.name)
             future = pool.submit(
                 download_with_retries,
                 urls,
@@ -349,6 +387,17 @@ def main() -> int:
                 attempts,
                 2.0,
                 timeout_seconds,
+                (
+                    int(previous["size_bytes"])
+                    if previous and "size_bytes" in previous
+                    else None
+                ),
+                (
+                    str(previous["sha256"])
+                    if previous and "sha256" in previous
+                    else None
+                ),
+                trust_existing_manifest,
             )
             jobs[future] = (timestamp_utc, urls, destination)
 

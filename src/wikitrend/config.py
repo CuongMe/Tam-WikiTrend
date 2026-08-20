@@ -34,7 +34,7 @@ class Settings:
         return cls(
             env=os.getenv("WIKITREND_ENV", "local"),
             start_date=_parse_date(os.getenv("WIKITREND_START_DATE", "2026-01-01")),
-            end_date=_parse_date(os.getenv("WIKITREND_END_DATE", "2026-01-07")),
+            end_date=_parse_date(os.getenv("WIKITREND_END_DATE", "2026-01-03")),
             source_project_allowlist=_parse_csv(
                 os.getenv(
                     "WIKITREND_SOURCE_PROJECT_ALLOWLIST",
