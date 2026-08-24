@@ -5,7 +5,8 @@ dumps locally. The repository currently implements bounded Bronze acquisition,
 Bronze-to-Silver pageview processing, Silver validation and cleanup, compact
 Gold aggregate table building, Gold-backed DuckDB serving views, local MinIO
 object-store configuration, pageview parsing helpers, configuration helpers,
-storage path utilities, and unit tests for the implemented behavior.
+storage path utilities, local Delta Lake conversion for compact Gold tables,
+and unit tests for the implemented behavior.
 
 The `paper/` directory is reserved for the project paper, written in LaTeX.
 
@@ -31,6 +32,7 @@ package modules in this repository.
 | Silver validation report | `data/processed/validation/silver_pageviews_validation.json` |
 | Gold output path | `data/processed/gold` |
 | Gold validation report | `data/processed/validation/gold_pageviews_validation.json` |
+| Delta output path | `data/processed/delta` |
 | Serving database path | `data/processed/serving/wikitrend.duckdb` |
 | MinIO endpoint | `http://localhost:9000` |
 | MinIO bucket | `wikitrend` |
@@ -55,13 +57,17 @@ Supported Wikimedia source project codes are defined in
 |   |   |-- pageviews/
 |   |   `-- pageviews_manifest.json
 |   `-- processed/
+|       |-- delta/
 |       |-- gold/
 |       |-- quarantine/
-|       `-- silver/
+|       |-- serving/
+|       |-- silver/
+|       `-- validation/
 |-- notebooks/
+|   |-- analyze_gold_trends.ipynb
 |   |-- inspect_bronze_data.ipynb
 |   |-- inspect_gold_data.ipynb
-|   `-- inspect_silver_data.ipynb
+|   |-- inspect_silver_data.ipynb
 |-- paper/
 |   |-- arxiv-style-LICENSE.txt
 |   |-- arxiv.sty
@@ -73,6 +79,7 @@ Supported Wikimedia source project codes are defined in
 |       |-- __init__.py
 |       |-- app.py
 |       |-- cli/
+|       |   |-- build_delta_lake.py
 |       |   |-- build_gold_pageviews.py
 |       |   |-- build_serving_db.py
 |       |   |-- build_silver_pageviews.py
@@ -80,6 +87,7 @@ Supported Wikimedia source project codes are defined in
 |       |   |-- validate_gold_pageviews.py
 |       |   `-- validate_silver_pageviews.py
 |       |-- config.py
+|       |-- delta_lake.py
 |       |-- gold.py
 |       |-- gold_validation.py
 |       |-- logging_utils.py
@@ -90,11 +98,13 @@ Supported Wikimedia source project codes are defined in
 |       `-- storage.py
 |-- tests/
 |   |-- conftest.py
+|   |-- test_config.py
+|   |-- test_delta_lake.py
 |   |-- test_download_pageviews.py
-|   |-- test_silver.py
 |   |-- test_gold.py
 |   |-- test_gold_validation.py
 |   |-- test_serving.py
+|   |-- test_silver.py
 |   |-- test_silver_validation.py
 |   `-- test_storage.py
 |-- docker-compose.minio.yml
@@ -102,7 +112,6 @@ Supported Wikimedia source project codes are defined in
 |-- requirements.in
 `-- requirements-dev.in
 ```
-
 ## Local MinIO Object Store
 
 Start the local S3-compatible object store:
@@ -290,6 +299,29 @@ The Gold validator checks manifest row counts, required schemas, table grains,
 metric domains, hourly-to-daily reconciliation, top-page rank rules, and optional
 sidecar cleanup candidates.
 
+## Build Delta Lake
+
+Build local Delta tables from compact Gold Parquet:
+
+```bash
+python -m wikitrend.cli.build_delta_lake
+```
+
+Inspect the Delta build plan without writing data:
+
+```bash
+python -m wikitrend.cli.build_delta_lake --dry-run
+```
+
+The Delta builder writes `data/processed/delta/gold` and
+`data/processed/delta/delta_manifest.json`. It converts compact Gold aggregates
+only, so it does not duplicate the full row-level Silver layer. Use `--overwrite`
+only when intentionally replacing existing Delta tables.
+
+This first Delta implementation uses delta-rs for local table writes. Spark
+Delta and MinIO-backed Delta tables should run from a pinned Java 17 Docker
+runtime later, because the current local Java 26 runtime is not compatible with
+the local Spark/Hadoop startup path.
 ## Build Serving DuckDB
 
 Build a compact DuckDB database over validated Gold Parquet:
@@ -336,6 +368,7 @@ environment variables:
 | `WIKITREND_RAW_DIR` | `data/raw/pageviews` |
 | `WIKITREND_SILVER_DIR` | `data/processed/silver/pageviews` |
 | `WIKITREND_GOLD_DIR` | `data/processed/gold` |
+| `WIKITREND_DELTA_DIR` | `data/processed/delta` |
 | `WIKITREND_SERVING_DB` | `data/processed/serving/wikitrend.duckdb` |
 | `WIKITREND_S3_ENDPOINT_URL` | `http://localhost:9000` |
 | `WIKITREND_S3_REGION` | `us-east-1` |
@@ -361,4 +394,5 @@ The declared pytest markers are:
 The checked-in tests currently cover downloader planning, retries, manifest
 scoping, gzip handling, mirror URL validation, bounded configuration values,
 Silver output guardrails, Silver validation helpers, Gold aggregate builders,
-Gold validation, DuckDB serving database creation, and MinIO configuration defaults.
+Gold validation, local Delta Lake conversion, DuckDB serving database creation,
+and MinIO configuration defaults.

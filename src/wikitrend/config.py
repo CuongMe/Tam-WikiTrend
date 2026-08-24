@@ -25,6 +25,7 @@ class Settings:
     raw_dir: Path
     silver_dir: Path
     gold_dir: Path
+    delta_dir: Path
     serving_db: Path
     s3_endpoint_url: str
     s3_region: str
@@ -51,6 +52,7 @@ class Settings:
                 os.getenv("WIKITREND_SILVER_DIR", "data/processed/silver/pageviews")
             ),
             gold_dir=Path(os.getenv("WIKITREND_GOLD_DIR", "data/processed/gold")),
+            delta_dir=Path(os.getenv("WIKITREND_DELTA_DIR", "data/processed/delta")),
             serving_db=Path(
                 os.getenv("WIKITREND_SERVING_DB", "data/processed/serving/wikitrend.duckdb")
             ),
