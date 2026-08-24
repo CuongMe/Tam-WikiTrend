@@ -26,6 +26,11 @@ class Settings:
     silver_dir: Path
     gold_dir: Path
     serving_db: Path
+    s3_endpoint_url: str
+    s3_region: str
+    s3_bucket: str
+    s3_access_key_id: str
+    s3_secret_access_key: str
     kafka_bootstrap_servers: str
     kafka_pageviews_topic: str
 
@@ -48,6 +53,14 @@ class Settings:
             gold_dir=Path(os.getenv("WIKITREND_GOLD_DIR", "data/processed/gold")),
             serving_db=Path(
                 os.getenv("WIKITREND_SERVING_DB", "data/processed/serving/wikitrend.duckdb")
+            ),
+            s3_endpoint_url=os.getenv("WIKITREND_S3_ENDPOINT_URL", "http://localhost:9000"),
+            s3_region=os.getenv("WIKITREND_S3_REGION", "us-east-1"),
+            s3_bucket=os.getenv("WIKITREND_S3_BUCKET", "wikitrend"),
+            s3_access_key_id=os.getenv("WIKITREND_S3_ACCESS_KEY_ID", "wikitrend"),
+            s3_secret_access_key=os.getenv(
+                "WIKITREND_S3_SECRET_ACCESS_KEY",
+                "wikitrend-local-password",
             ),
             kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094"),
             kafka_pageviews_topic=os.getenv("KAFKA_PAGEVIEWS_TOPIC", "wikitrend.pageviews"),

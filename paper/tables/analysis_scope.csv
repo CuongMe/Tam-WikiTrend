@@ -1,0 +1,7 @@
+metric,value
+database,data\processed\serving\wikitrend.duckdb
+database_size_mb,0.762
+gold_validation_status,pass
+hourly_rows,504
+daily_rows,21
+top_page_rows,50400

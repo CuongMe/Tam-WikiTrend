@@ -1,0 +1,5 @@
+layer,path,size_bytes,size_mb,size_gb
+bronze_raw,data/raw,3842934231,3664.907675743103,3.579011402092874
+silver_processed,data/processed/silver,5050812635,4816.830286979675,4.703935827128589
+gold_processed,data/processed/gold,1215150,1.1588573455810547,0.0011316966265439987
+serving_duckdb,data/processed/serving/wikitrend.duckdb,798720,0.76171875,0.000743865966796875

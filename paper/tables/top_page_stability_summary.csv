@@ -1,0 +1,8 @@
+project,access_mode,avg_retention_rate,min_retention_rate,max_retention_rate,compared_hours
+en,desktop,0.8081944444444444,0.0,0.91,72
+en,mobile,0.78875,0.0,0.93,72
+commons,mobile,0.7112843784378438,0.0,0.81,72
+vi,mobile,0.6184722222222222,0.0,0.76,72
+commons,desktop,0.47708333333333336,0.0,0.66,72
+vi,desktop,0.38333333333333336,0.0,0.6,72
+wikidata,desktop,0.22527777777777777,0.0,0.33,72
