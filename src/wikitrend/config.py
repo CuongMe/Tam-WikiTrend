@@ -27,8 +27,6 @@ class Settings:
     gold_dir: Path
     delta_dir: Path
     serving_db: Path
-    kafka_bootstrap_servers: str
-    kafka_pageviews_topic: str
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -51,8 +49,6 @@ class Settings:
             serving_db=Path(
                 os.getenv("WIKITREND_SERVING_DB", "data/processed/serving/wikitrend.duckdb")
             ),
-            kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094"),
-            kafka_pageviews_topic=os.getenv("KAFKA_PAGEVIEWS_TOPIC", "wikitrend.pageviews"),
         )
 
 

@@ -1,10 +1,7 @@
 # WikiTrend
 
-WikiTrend is a Python 3.11 project for working with Wikimedia hourly pageview dumps locally. The repository currently implements bounded Bronze acquisition, Bronze-to-Silver pageview processing, Silver validation and cleanup, compact Gold aggregate table building, local Delta Lake conversion for compact Gold tables, Gold-backed DuckDB serving views, a Streamlit dashboard, pageview parsing helpers, configuration helpers, storage path utilities, and unit tests for the implemented behavior.
+WikiTrend is a Python 3.11 project for working with Wikimedia hourly pageview dumps locally. It implements a bounded batch lakehouse workflow: Bronze acquisition, Silver cleaning and validation, compact Gold aggregates, local Delta Lake conversion, a DuckDB serving database, a Streamlit dashboard, and a FastAPI read API.
 
-The `paper/` directory is reserved for the project paper, written in LaTeX.
-
-The project metadata pins the intended local analytics stack in `pyproject.toml` and `requirements.in`, including PySpark, delta-rs, Delta Lake, DuckDB, Kafka client support, FastAPI, Streamlit, LightGBM, Prophet, pandas, NumPy, and PyArrow. Streaming and forecasting layers are not currently implemented as package modules in this repository.
 
 ## Current Scope
 
@@ -52,14 +49,11 @@ Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews
 |   |-- analyze_gold_trends.ipynb
 |   |-- inspect_bronze_data.ipynb
 |   |-- inspect_gold_data.ipynb
-|   |-- inspect_silver_data.ipynb
-|-- paper/
-|   |-- arxiv-style-LICENSE.txt
-|   |-- arxiv.sty
-|   `-- main.tex
+|   `-- inspect_silver_data.ipynb
 |-- src/
 |   `-- wikitrend/
 |       |-- app.py
+|       |-- api.py
 |       |-- cli/
 |       |   |-- build_delta_lake.py
 |       |   |-- build_gold_pageviews.py
@@ -148,7 +142,7 @@ Use `--dry-run` on build commands to inspect plans without writing data. Use `--
 
 Bronze stores raw Wikimedia gzip files and a SHA-256 manifest. Silver stores cleaned row-level Parquet partitioned by date, hour, project, and access mode. Gold stores compact aggregate Parquet tables: `hourly_project_access`, `daily_project_access`, and `top_pages_hourly`. Delta stores local Delta Lake copies of the compact Gold tables under `data/processed/delta/gold`. DuckDB serves validated Gold through views and metadata tables without duplicating Silver data.
 
-## Notebooks And Dashboard
+## Notebooks, Dashboard, And API
 
 Read-only inspection notebooks live in `notebooks/`:
 
@@ -165,6 +159,14 @@ Start the Streamlit dashboard from the DuckDB serving database:
 streamlit run src/wikitrend/app.py
 ```
 
+Start the local FastAPI read API:
+
+```bash
+uvicorn wikitrend.api:app --reload
+```
+
+API docs are available at `http://127.0.0.1:8000/docs` when the API is running.
+
 ## Configuration
 
 Default settings come from `src/wikitrend/config.py` and can be overridden with environment variables:
@@ -180,8 +182,7 @@ Default settings come from `src/wikitrend/config.py` and can be overridden with 
 | `WIKITREND_GOLD_DIR` | `data/processed/gold` |
 | `WIKITREND_DELTA_DIR` | `data/processed/delta` |
 | `WIKITREND_SERVING_DB` | `data/processed/serving/wikitrend.duckdb` |
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` |
-| `KAFKA_PAGEVIEWS_TOPIC` | `wikitrend.pageviews` |
+| `WIKITREND_GOLD_VALIDATION_REPORT` | `data/processed/validation/gold_pageviews_validation.json` |
 
 ## Testing
 
@@ -191,4 +192,4 @@ Run the current test suite with:
 pytest
 ```
 
-The checked-in tests currently cover downloader planning, retries, manifest scoping, gzip handling, mirror URL validation, bounded configuration values, Silver output guardrails, Silver validation helpers, Gold aggregate builders, Gold validation, local Delta Lake conversion, DuckDB serving database creation, and local configuration defaults.
+The checked-in tests cover downloader planning, retries, manifest scoping, gzip handling, mirror URL validation, bounded configuration values, Silver output guardrails, Silver validation helpers, Gold aggregate builders, Gold validation, local Delta Lake conversion, DuckDB serving database creation, FastAPI endpoints, and local configuration defaults.

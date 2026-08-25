@@ -13,7 +13,6 @@ dependencies = [
   "delta-spark==4.0.0",
   "duckdb==1.1.3",
   "fastapi==0.115.6",
-  "kafka-python==2.0.2",
   "lightgbm==4.5.0",
   "numpy==2.2.6",
   "pandas==2.2.3",
@@ -44,7 +43,6 @@ testpaths = ["tests"]
 pythonpath = ["src", "."]
 markers = [
   "integration: local service or Spark integration coverage",
-  "kafka_integration: requires a Kafka broker on localhost:9094",
 ]
 
 [tool.ruff]
@@ -55,5 +53,3 @@ exclude = ["notebooks"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
-[tool.ruff.lint.isort]
-known-third-party = ["airflow"]

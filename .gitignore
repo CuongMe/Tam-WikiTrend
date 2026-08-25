@@ -19,8 +19,6 @@ build/
 .ipynb_checkpoints/
 .streamlit/secrets.toml
 spark-warehouse/
-minio-data/
-volumes/minio/
 metastore_db/
 derby.log
 *.duckdb
@@ -30,7 +28,6 @@ derby.log
 *.pid
 *.tmp
 *.crc
-docker-compose.override.yml
 
 # Local data lake outputs
 data/
@@ -42,7 +39,6 @@ models/lightgbm/
 
 # Runtime logs
 logs/
-airflow/logs/
 
 # IDE and OS metadata
 .idea/
@@ -50,14 +46,6 @@ airflow/logs/
 .DS_Store
 Thumbs.db
 
-# LaTeX build artifacts
-*.aux
-*.bbl
-*.blg
-*.fdb_latexmk
-*.fls
-*.out
-*.synctex.gz
 
 # Personal local notes
 Notepad.txt
