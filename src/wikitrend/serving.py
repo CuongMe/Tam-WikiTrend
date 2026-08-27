@@ -8,11 +8,31 @@ from typing import Any
 
 from wikitrend.gold_validation import GOLD_TABLE_CONTRACTS, validate_gold_layer
 
+FORECAST_TARGET_TABLE = "hourly_project_access"
+FORECAST_TABLE_CONTRACTS: dict[str, dict[str, str]] = {
+    "forecast_metrics": {
+        "file_name": "metrics.parquet",
+        "view_name": "forecast.forecast_metrics",
+        "grain": "model, project, access_mode",
+    },
+    "forecast_backtest_predictions": {
+        "file_name": "backtest_predictions.parquet",
+        "view_name": "forecast.forecast_backtest_predictions",
+        "grain": "fold, horizon_step, hour, model, project, access_mode",
+    },
+    "forecast_future": {
+        "file_name": "forecast.parquet",
+        "view_name": "forecast.forecast_future",
+        "grain": "generated_at_utc, horizon_step, hour, model, project, access_mode",
+    },
+}
+
 
 @dataclass(frozen=True)
 class ServingBuildSummary:
     database_path: Path
     gold_dir: Path
+    forecast_dir: Path | None
     validation_report_path: Path | None
     views: tuple[str, ...]
     row_counts: dict[str, int]
@@ -23,6 +43,7 @@ class ServingBuildSummary:
         payload = asdict(self)
         payload["database_path"] = str(self.database_path)
         payload["gold_dir"] = str(self.gold_dir)
+        payload["forecast_dir"] = str(self.forecast_dir) if self.forecast_dir else None
         payload["validation_report_path"] = (
             str(self.validation_report_path) if self.validation_report_path else None
         )
@@ -49,6 +70,23 @@ def _sql_path(path: Path) -> str:
 
 def _parquet_glob(path: Path) -> str:
     return _sql_literal((path.resolve() / "**" / "*.parquet").as_posix())
+
+
+def _forecast_table_dir(forecast_dir: Path) -> Path:
+    return forecast_dir / FORECAST_TARGET_TABLE
+
+
+def _forecast_table_path(forecast_dir: Path, table_name: str) -> Path:
+    return _forecast_table_dir(forecast_dir) / FORECAST_TABLE_CONTRACTS[table_name]["file_name"]
+
+
+def _forecast_outputs_available(forecast_dir: Path | None) -> bool:
+    if forecast_dir is None:
+        return False
+    return all(
+        _forecast_table_path(forecast_dir, table_name).exists()
+        for table_name in FORECAST_TABLE_CONTRACTS
+    )
 
 
 def _read_validation_report(path: Path) -> dict[str, Any]:
@@ -83,7 +121,7 @@ def _assert_gold_valid(
         )
 
 
-def _create_gold_views(con, gold_dir: Path) -> None:
+def _create_gold_views(con, gold_dir: Path) -> tuple[str, ...]:
     con.execute("create schema if not exists gold")
     con.execute("create schema if not exists metadata")
 
@@ -147,12 +185,72 @@ def _create_gold_views(con, gold_dir: Path) -> None:
         )
         """
     )
+    return tuple(f"gold.{table_name}" for table_name in GOLD_TABLE_CONTRACTS)
+
+
+def _create_forecast_views(con, forecast_dir: Path | None) -> tuple[str, ...]:
+    if not _forecast_outputs_available(forecast_dir):
+        return ()
+
+    assert forecast_dir is not None
+    con.execute("create schema if not exists forecast")
+    con.execute(
+        f"""
+        create or replace view forecast.forecast_metrics as
+        select
+            project,
+            access_mode,
+            model,
+            cast(folds as integer) as folds,
+            cast(observations as integer) as observations,
+            cast(mdae as double) as mdae,
+            cast(mase as double) as mase,
+            cast(rmase as double) as rmase,
+            cast(mdape as double) as mdape,
+            cast(mdsmape as double) as mdsmape
+        from read_parquet({_sql_path(_forecast_table_path(forecast_dir, "forecast_metrics"))})
+        """
+    )
+    con.execute(
+        f"""
+        create or replace view forecast.forecast_backtest_predictions as
+        select
+            cast(fold_id as integer) as fold_id,
+            cast(horizon_step as integer) as horizon_step,
+            cast(ds as timestamp) as timestamp_utc,
+            project,
+            access_mode,
+            model,
+            cast(y_true as double) as y_true,
+            cast(y_pred as double) as y_pred,
+            cast(mase_scale as double) as mase_scale
+        from read_parquet(
+            {_sql_path(_forecast_table_path(forecast_dir, "forecast_backtest_predictions"))}
+        )
+        """
+    )
+    con.execute(
+        f"""
+        create or replace view forecast.forecast_future as
+        select
+            cast(generated_at_utc as varchar) as generated_at_utc,
+            cast(horizon_step as integer) as horizon_step,
+            cast(ds as timestamp) as timestamp_utc,
+            project,
+            access_mode,
+            model,
+            cast(yhat as double) as yhat
+        from read_parquet({_sql_path(_forecast_table_path(forecast_dir, "forecast_future"))})
+        """
+    )
+    return tuple(contract["view_name"] for contract in FORECAST_TABLE_CONTRACTS.values())
 
 
 def _create_metadata(
     *,
     con,
     gold_dir: Path,
+    forecast_dir: Path | None,
     database_path: Path,
     validation_report_path: Path | None,
     generated_at_utc: str,
@@ -160,6 +258,7 @@ def _create_metadata(
 ) -> None:
     con.execute("drop table if exists metadata.serving_build")
     con.execute("drop table if exists metadata.gold_table_inventory")
+    con.execute("drop table if exists metadata.forecast_table_inventory")
     con.execute(
         f"""
         create table metadata.serving_build as
@@ -167,6 +266,7 @@ def _create_metadata(
             {_sql_literal(generated_at_utc)} as generated_at_utc,
             {_sql_path(database_path)} as database_path,
             {_sql_path(gold_dir)} as gold_dir,
+            {_sql_literal(str(forecast_dir) if forecast_dir else "")} as forecast_dir,
             {_sql_literal(str(validation_report_path) if validation_report_path else "")}
                 as validation_report_path,
             'view' as storage_mode
@@ -175,6 +275,8 @@ def _create_metadata(
 
     rows_sql = []
     for table_name, row_count in row_counts.items():
+        if table_name not in GOLD_TABLE_CONTRACTS:
+            continue
         contract = GOLD_TABLE_CONTRACTS[table_name]
         rows_sql.append(
             "select "
@@ -184,16 +286,46 @@ def _create_metadata(
             f"{int(row_count)}::bigint as row_count, "
             f"{_parquet_glob(gold_dir / contract.path)} as parquet_glob"
         )
-    con.execute(
-        "create table metadata.gold_table_inventory as\n"
-        + "\nunion all\n".join(rows_sql)
-    )
+    con.execute("create table metadata.gold_table_inventory as\n" + "\nunion all\n".join(rows_sql))
+
+    forecast_rows_sql = []
+    if forecast_dir is not None:
+        for table_name, contract in FORECAST_TABLE_CONTRACTS.items():
+            if table_name not in row_counts:
+                continue
+            forecast_rows_sql.append(
+                "select "
+                f"{_sql_literal(table_name)} as table_name, "
+                f"{_sql_literal(contract['view_name'])} as view_name, "
+                f"{_sql_literal(contract['grain'])} as grain, "
+                f"{int(row_counts[table_name])}::bigint as row_count, "
+                f"{_sql_path(_forecast_table_path(forecast_dir, table_name))} as parquet_path"
+            )
+    if forecast_rows_sql:
+        con.execute(
+            "create table metadata.forecast_table_inventory as\n"
+            + "\nunion all\n".join(forecast_rows_sql)
+        )
+    else:
+        con.execute(
+            """
+            create table metadata.forecast_table_inventory as
+            select
+                cast(null as varchar) as table_name,
+                cast(null as varchar) as view_name,
+                cast(null as varchar) as grain,
+                cast(null as bigint) as row_count,
+                cast(null as varchar) as parquet_path
+            where false
+            """
+        )
 
 
 def build_serving_database(
     *,
     gold_dir: Path,
     database_path: Path,
+    forecast_dir: Path | None = None,
     validation_report_path: Path | None = None,
     overwrite: bool = False,
     require_validation: bool = True,
@@ -216,14 +348,21 @@ def build_serving_database(
     generated_at_utc = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     con = duckdb.connect(str(database_path))
     try:
-        _create_gold_views(con, gold_dir)
+        gold_views = _create_gold_views(con, gold_dir)
+        forecast_views = _create_forecast_views(con, forecast_dir)
         row_counts = {
             table_name: int(con.execute(f"select count(*) from gold.{table_name}").fetchone()[0])
             for table_name in GOLD_TABLE_CONTRACTS
         }
+        for table_name, contract in FORECAST_TABLE_CONTRACTS.items():
+            if contract["view_name"] in forecast_views:
+                row_counts[table_name] = int(
+                    con.execute(f"select count(*) from {contract['view_name']}").fetchone()[0]
+                )
         _create_metadata(
             con=con,
             gold_dir=gold_dir,
+            forecast_dir=forecast_dir if forecast_views else None,
             database_path=database_path,
             validation_report_path=validation_report_path,
             generated_at_utc=generated_at_utc,
@@ -236,8 +375,9 @@ def build_serving_database(
     return ServingBuildSummary(
         database_path=database_path,
         gold_dir=gold_dir,
+        forecast_dir=forecast_dir if forecast_views else None,
         validation_report_path=validation_report_path,
-        views=tuple(f"gold.{table_name}" for table_name in GOLD_TABLE_CONTRACTS),
+        views=(*gold_views, *forecast_views),
         row_counts=row_counts,
         overwrite=overwrite,
         generated_at_utc=generated_at_utc,
@@ -245,6 +385,7 @@ def build_serving_database(
 
 
 __all__ = [
+    "FORECAST_TABLE_CONTRACTS",
     "ServingBuildSummary",
     "assert_serving_writable",
     "build_serving_database",

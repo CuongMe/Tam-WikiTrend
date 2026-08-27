@@ -27,6 +27,7 @@ class Settings:
     gold_dir: Path
     delta_dir: Path
     serving_db: Path
+    forecast_dir: Path
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -49,6 +50,7 @@ class Settings:
             serving_db=Path(
                 os.getenv("WIKITREND_SERVING_DB", "data/processed/serving/wikitrend.duckdb")
             ),
+            forecast_dir=Path(os.getenv("WIKITREND_FORECAST_DIR", "data/processed/forecast")),
         )
 
 

@@ -1,29 +1,65 @@
 # WikiTrend
 
-WikiTrend is a Python 3.11 project for working with Wikimedia hourly pageview dumps locally. It implements a bounded batch lakehouse workflow: Bronze acquisition, Silver cleaning and validation, compact Gold aggregates, local Delta Lake conversion, a DuckDB serving database, a Streamlit dashboard, and a FastAPI read API.
+WikiTrend is a local Python 3.11 data engineering project for Wikimedia hourly pageview data. It implements a bounded batch lakehouse that downloads raw Wikimedia dumps, cleans them into Silver Parquet, builds compact Gold analytics tables, trains baseline forecasting models, and serves the results through DuckDB, Streamlit, FastAPI, Delta Lake, and optional Apache Airflow orchestration.
 
+The project is intentionally scoped to a small 72-hour dataset so it can run on a local machine without Docker or cloud storage.
+
+## What This Project Builds
+
+| Layer | Purpose | Output |
+| --- | --- | --- |
+| Bronze | Download official Wikimedia hourly gzip dumps and track file hashes. | `data/raw/pageviews` |
+| Silver | Parse, clean, validate, and partition row-level pageview records. | `data/processed/silver/pageviews` |
+| Quarantine | Store malformed or unsupported rows for inspection. | `data/processed/quarantine/pageviews` |
+| Gold | Build compact analytical aggregates. | `data/processed/gold` |
+| Forecast | Compare time-series models and generate future forecasts. | `data/processed/forecast` |
+| Delta | Convert compact Gold tables to local Delta Lake format. | `data/processed/delta` |
+| Serving | Expose Gold and forecast outputs as DuckDB views. | `data/processed/serving/wikitrend.duckdb` |
+| Dashboard | Explore trends, top pages, quality, and forecasts. | `src/wikitrend/app.py` |
+| API | Read Gold analytics from FastAPI. | `src/wikitrend/api.py` |
+| Orchestration | Run the batch pipeline through Airflow. | `airflow/dags/wikitrend_batch_lakehouse.py` |
 
 ## Current Scope
 
 | Item | Current value |
 | --- | --- |
-| Python version | `>=3.11,<3.12` |
-| Package layout | `src/wikitrend` |
+| Python | `>=3.11,<3.12` |
+| Data window | `2026-01-01` through `2026-01-03` UTC |
+| Expected Bronze files | `72` hourly files |
 | Acquisition plan | `configs/pageview_download_plan.json` |
-| Planned window | `2026-01-01` through `2026-01-03` UTC |
-| Expected hourly files | `72` |
-| Raw output path | `data/raw/pageviews` |
-| Manifest path | `data/raw/pageviews_manifest.json` |
-| Silver output path | `data/processed/silver/pageviews` |
-| Quarantine output path | `data/processed/quarantine/pageviews` |
-| Silver validation report | `data/processed/validation/silver_pageviews_validation.json` |
-| Gold output path | `data/processed/gold` |
-| Gold validation report | `data/processed/validation/gold_pageviews_validation.json` |
-| Delta output path | `data/processed/delta` |
-| Serving database path | `data/processed/serving/wikitrend.duckdb` |
+| Source allowlist | `en`, `en.m`, `vi`, `vi.m`, `commons.m`, `commons.m.m`, `www.wd` |
 | Hash algorithm | SHA-256 |
+| Forecast models | seasonal naive, Ridge, ElasticNet, LightGBM |
+| Forecast evaluation | rolling-window backtest with median-grounded metrics |
+| Orchestration | optional local Airflow, manual DAG schedule |
 
-Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews.py`: `en`, `en.m`, `vi`, `vi.m`, `commons.m`, `commons.m.m`, `www.wd`, and `www.wd.m`. The default allowlist excludes `www.wd.m`.
+Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews.py`. The configured default excludes `www.wd.m` to keep the local data footprint bounded.
+
+## Architecture
+
+```text
+Wikimedia hourly dumps
+        |
+        v
+Bronze raw gzip + manifest
+        |
+        v
+Silver Parquet + quarantine + validation
+        |
+        v
+Gold aggregate Parquet + validation
+        |
+        +--> Forecast features, backtests, metrics, future forecasts
+        |
+        +--> Delta Lake copies of Gold tables
+        |
+        v
+DuckDB serving database views
+        |
+        +--> Streamlit dashboard
+        +--> FastAPI read API
+        +--> Airflow batch orchestration
+```
 
 ## Repository Layout
 
@@ -32,22 +68,15 @@ Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews
 |-- .env.example
 |-- .streamlit/
 |   `-- config.toml
+|-- airflow/
+|   `-- dags/
+|       `-- wikitrend_batch_lakehouse.py
 |-- configs/
 |   `-- pageview_download_plan.json
-|-- data/
-|   |-- raw/
-|   |   |-- pageviews/
-|   |   `-- pageviews_manifest.json
-|   `-- processed/
-|       |-- delta/
-|       |-- gold/
-|       |-- quarantine/
-|       |-- serving/
-|       |-- silver/
-|       `-- validation/
 |-- notebooks/
 |   |-- analyze_gold_trends.ipynb
 |   |-- inspect_bronze_data.ipynb
+|   |-- inspect_forecast_data.ipynb
 |   |-- inspect_gold_data.ipynb
 |   `-- inspect_silver_data.ipynb
 |-- src/
@@ -56,6 +85,7 @@ Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews
 |       |-- api.py
 |       |-- cli/
 |       |   |-- build_delta_lake.py
+|       |   |-- build_forecast_pageviews.py
 |       |   |-- build_gold_pageviews.py
 |       |   |-- build_serving_db.py
 |       |   |-- build_silver_pageviews.py
@@ -64,6 +94,7 @@ Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews
 |       |   `-- validate_silver_pageviews.py
 |       |-- config.py
 |       |-- delta_lake.py
+|       |-- forecasting.py
 |       |-- gold.py
 |       |-- gold_validation.py
 |       |-- pageviews.py
@@ -73,103 +104,232 @@ Supported Wikimedia source project codes are defined in `src/wikitrend/pageviews
 |       `-- storage.py
 |-- tests/
 |-- pyproject.toml
-|-- requirements.in
-`-- requirements-dev.in
+|-- requirements-airflow.in
+|-- requirements-dev.in
+`-- requirements.in
 ```
+
+Local data, databases, logs, and runtime artifacts are intentionally ignored by git.
 
 ## Setup
 
-Create and activate a Python 3.11 environment, then install the pinned runtime and development dependencies:
+Create and activate a Python 3.11 environment. Then install the pinned project dependencies:
 
 ```bash
 pip install -r requirements.in
 pip install -r requirements-dev.in
-```
-
-The package can also be installed in editable mode with development extras:
-
-```bash
 pip install -e ".[dev]"
 ```
 
-## Pipeline
+For the existing Windows conda environment used during development:
 
-Download or verify the Bronze files in the configured plan:
+```powershell
+& D:\Anaconda\envs\wikitrend\python.exe -m pip install -r requirements.in
+& D:\Anaconda\envs\wikitrend\python.exe -m pip install -r requirements-dev.in
+& D:\Anaconda\envs\wikitrend\python.exe -m pip install -e ".[dev]"
+```
+
+Airflow is optional and should be installed separately from the core project environment:
+
+```bash
+pip install -r requirements-airflow.in
+```
+
+For this project, Airflow is intended to run from Linux or WSL.
+
+## End-to-End Pipeline
+
+Run these commands from the repository root.
+
+### 1. Download Bronze
 
 ```bash
 python -m wikitrend.cli.download_pageviews --plan configs/pageview_download_plan.json
 ```
 
-Build Silver Parquet from Bronze:
+### 2. Build Silver
 
 ```bash
 python -m wikitrend.cli.build_silver_pageviews
 ```
 
-Validate Silver before building Gold:
+### 3. Validate Silver
 
 ```bash
 python -m wikitrend.cli.validate_silver_pageviews --full-scan --report data/processed/validation/silver_pageviews_validation.json
 ```
 
-Build compact Gold aggregates:
+### 4. Build Gold
 
 ```bash
 python -m wikitrend.cli.build_gold_pageviews
 ```
 
-Validate Gold:
+### 5. Validate Gold
 
 ```bash
 python -m wikitrend.cli.validate_gold_pageviews --silver-validation-report data/processed/validation/silver_pageviews_validation.json --report data/processed/validation/gold_pageviews_validation.json
 ```
 
-Build local Delta tables from compact Gold:
+### 6. Build Forecasts
+
+```bash
+python -m wikitrend.cli.build_forecast_pageviews
+```
+
+The forecasting layer compares:
+
+| Model | Role |
+| --- | --- |
+| `seasonal_naive_24h` | Baseline using the same hour from the previous day. |
+| `ridge_lag` | Linear lag model with scaled features. |
+| `elasticnet_lag` | Regularized linear lag model with feature selection pressure. |
+| `lightgbm_lag` | Tree-based lag model for nonlinear relationships. |
+
+Forecasting uses rolling-window splitting, normalized lag and rolling median features, and a transformed target: `log1p(y / rolling_median_positive_series_scale)`.
+
+Forecast evaluation uses median-grounded metrics:
+
+| Metric | Meaning |
+| --- | --- |
+| `mdae` | Median absolute error in pageview units. |
+| `mase` | Median absolute scaled error using a seasonal training-window scale. |
+| `rmase` | Relative MASE versus `seasonal_naive_24h`; values below `1.0` beat naive. |
+| `mdape` | Median absolute percentage error. |
+| `mdsmape` | Median symmetric absolute percentage error. |
+
+### 7. Build Delta Lake
 
 ```bash
 python -m wikitrend.cli.build_delta_lake
 ```
 
-Build the DuckDB serving database:
+### 8. Build Serving Database
 
 ```bash
 python -m wikitrend.cli.build_serving_db
 ```
 
-Use `--dry-run` on build commands to inspect plans without writing data. Use `--overwrite` only when intentionally replacing existing processed outputs.
+Use `--dry-run` to inspect a command without writing outputs. Use `--overwrite` only when intentionally replacing existing generated data.
 
-## Data Layers
+## Data Contracts
 
-Bronze stores raw Wikimedia gzip files and a SHA-256 manifest. Silver stores cleaned row-level Parquet partitioned by date, hour, project, and access mode. Gold stores compact aggregate Parquet tables: `hourly_project_access`, `daily_project_access`, and `top_pages_hourly`. Delta stores local Delta Lake copies of the compact Gold tables under `data/processed/delta/gold`. DuckDB serves validated Gold through views and metadata tables without duplicating Silver data.
+### Gold Tables
 
-## Notebooks, Dashboard, And API
+| Table | Grain |
+| --- | --- |
+| `gold.hourly_project_access` | date, hour, project, access mode |
+| `gold.daily_project_access` | date, project, access mode |
+| `gold.top_pages_hourly` | date, hour, project, access mode, rank |
 
-Read-only inspection notebooks live in `notebooks/`:
+### Forecast Tables
 
-```bash
-jupyter lab notebooks/inspect_bronze_data.ipynb
-jupyter lab notebooks/inspect_silver_data.ipynb
-jupyter lab notebooks/inspect_gold_data.ipynb
-jupyter lab notebooks/analyze_gold_trends.ipynb
-```
+| Table | Grain |
+| --- | --- |
+| `forecast.forecast_metrics` | model, project, access mode |
+| `forecast.forecast_backtest_predictions` | fold, horizon step, hour, model, project, access mode |
+| `forecast.forecast_future` | generated timestamp, horizon step, hour, model, project, access mode |
 
-Start the Streamlit dashboard from the DuckDB serving database:
+DuckDB serves these as views over Parquet files, so the serving layer does not duplicate Silver, Gold, or forecast data.
+
+## Dashboard
+
+Start the Streamlit dashboard:
 
 ```bash
 streamlit run src/wikitrend/app.py
 ```
 
-Start the local FastAPI read API:
+The dashboard includes:
+
+| Page | What it shows |
+| --- | --- |
+| Overview | Total demand, hourly trend, and segment contribution. |
+| Segments | Project/access-mode comparisons and volatility. |
+| Top Pages | High-demand pages and concentration by rank. |
+| Forecasting | Model leaderboard by `rmase`, beat-naive highlighting, backtest chart, and future forecast chart. |
+| Quality | Validation status, table inventory, and serving metadata. |
+
+## FastAPI
+
+Start the API:
 
 ```bash
 uvicorn wikitrend.api:app --reload
 ```
 
-API docs are available at `http://127.0.0.1:8000/docs` when the API is running.
+Open the docs at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Current API endpoints expose health, quality, metadata, project summaries, hourly trends, and top pages.
+
+## Airflow
+
+The Airflow DAG is `wikitrend_batch_lakehouse`. It orchestrates:
+
+```text
+download_bronze
+  -> build_silver
+  -> validate_silver
+  -> build_gold
+  -> validate_gold
+  -> build_forecast
+  -> build_delta
+  -> build_serving_db
+```
+
+Set up Airflow with a repo-local home:
+
+```bash
+export AIRFLOW_HOME="$PWD/airflow"
+export WIKITREND_AIRFLOW_PROJECT_DIR="$PWD"
+export WIKITREND_AIRFLOW_PYTHON="$(which python)"
+```
+
+Initialize Airflow and create a local admin user:
+
+```bash
+airflow db migrate
+airflow users create \
+  --username admin \
+  --firstname Wiki \
+  --lastname Trend \
+  --role Admin \
+  --email admin@example.com \
+  --password admin
+```
+
+Run the scheduler and webserver in separate terminals:
+
+```bash
+airflow scheduler
+airflow webserver --port 8080
+```
+
+The DAG is manual by default. Trigger a full rebuild with this DAG config:
+
+```json
+{"overwrite": true}
+```
+
+## Notebooks
+
+Read-only inspection and analysis notebooks live in `notebooks/`:
+
+| Notebook | Purpose |
+| --- | --- |
+| `inspect_bronze_data.ipynb` | Inspect raw downloads and manifest coverage. |
+| `inspect_silver_data.ipynb` | Validate parsed row-level Silver data. |
+| `inspect_gold_data.ipynb` | Inspect Gold aggregate tables. |
+| `inspect_forecast_data.ipynb` | Review forecast features, metrics, backtests, and future predictions. |
+| `analyze_gold_trends.ipynb` | Analyze demand patterns from Gold tables. |
 
 ## Configuration
 
-Default settings come from `src/wikitrend/config.py` and can be overridden with environment variables:
+Default settings come from `src/wikitrend/config.py` and can be overridden with environment variables.
 
 | Variable | Default |
 | --- | --- |
@@ -180,16 +340,42 @@ Default settings come from `src/wikitrend/config.py` and can be overridden with 
 | `WIKITREND_RAW_DIR` | `data/raw/pageviews` |
 | `WIKITREND_SILVER_DIR` | `data/processed/silver/pageviews` |
 | `WIKITREND_GOLD_DIR` | `data/processed/gold` |
+| `WIKITREND_FORECAST_DIR` | `data/processed/forecast` |
 | `WIKITREND_DELTA_DIR` | `data/processed/delta` |
 | `WIKITREND_SERVING_DB` | `data/processed/serving/wikitrend.duckdb` |
 | `WIKITREND_GOLD_VALIDATION_REPORT` | `data/processed/validation/gold_pageviews_validation.json` |
+| `WIKITREND_AIRFLOW_PROJECT_DIR` | current repository directory |
+| `WIKITREND_AIRFLOW_PYTHON` | `python` |
 
 ## Testing
 
-Run the current test suite with:
+Run the full test suite:
 
 ```bash
 pytest
 ```
 
-The checked-in tests cover downloader planning, retries, manifest scoping, gzip handling, mirror URL validation, bounded configuration values, Silver output guardrails, Silver validation helpers, Gold aggregate builders, Gold validation, local Delta Lake conversion, DuckDB serving database creation, FastAPI endpoints, and local configuration defaults.
+Run linting:
+
+```bash
+ruff check .
+```
+
+The tests currently cover downloader planning, retries, manifest scoping, gzip handling, mirror URL validation, bounded configuration values, Silver build guardrails, Silver validation, Gold aggregation, Gold validation, forecasting model comparison, Delta conversion, DuckDB serving views, FastAPI endpoints, Airflow DAG structure, and local configuration defaults.
+
+## Current Limitations
+
+| Area | Limitation |
+| --- | --- |
+| Forecast horizon | The model is trained on only 72 hours, so the seasonal naive baseline is difficult to beat consistently. |
+| API coverage | FastAPI currently exposes Gold analytics, but forecast endpoints are not yet exposed. |
+| Delta coverage | Delta conversion currently covers compact Gold tables, not forecast tables. |
+| Airflow runtime | Airflow is configured for local Linux/WSL usage, not Docker. |
+
+## Recommended Next Improvements
+
+1. Add forecast endpoints to FastAPI.
+2. Add strict validation for forecast output completeness before serving DB rebuilds.
+3. Add optional Bronze checksum verification before Silver processing.
+4. Add Delta conversion for forecast tables if forecasts become a first-class data product.
+5. Add a stronger Airflow DAG parse test using `DagBag`.

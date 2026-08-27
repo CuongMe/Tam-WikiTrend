@@ -43,6 +43,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "."]
 markers = [
   "integration: local service or Spark integration coverage",
+  "airflow: local Airflow DAG structure coverage",
 ]
 
 [tool.ruff]
