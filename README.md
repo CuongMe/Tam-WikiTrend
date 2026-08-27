@@ -232,6 +232,43 @@ Use `--dry-run` to inspect a command without writing outputs. Use `--overwrite` 
 
 DuckDB serves these as views over Parquet files, so the serving layer does not duplicate Silver, Gold, or forecast data.
 
+## Results
+
+The latest local run completed successfully for the configured 72-hour scope.
+
+### Validation Summary
+
+| Check | Result |
+| --- | --- |
+| Silver validation status | `pass` |
+| Silver rows | `171,126,822` |
+| Silver partition combinations | `504` |
+| Gold validation status | `pass` |
+
+### Serving Inventory
+
+| Serving view | Rows |
+| --- | ---: |
+| `gold.hourly_project_access` | 504 |
+| `gold.daily_project_access` | 21 |
+| `gold.top_pages_hourly` | 50,400 |
+| `forecast.forecast_metrics` | 32 |
+| `forecast.forecast_backtest_predictions` | 1,008 |
+| `forecast.forecast_future` | 672 |
+
+### Forecast Backtest Leaderboard
+
+Overall model performance is ranked by `rmase`. A value below `1.0` means the model beat the seasonal naive baseline.
+
+| Rank | Model | MDAE | MASE | RMASE | MdAPE | MdSMAPE |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | `seasonal_naive_24h` | 7,167.00 | 0.943 | 1.000 | 9.90 | 10.10 |
+| 2 | `elasticnet_lag` | 9,731.10 | 1.058 | 1.121 | 13.38 | 14.10 |
+| 3 | `lightgbm_lag` | 11,551.47 | 1.167 | 1.237 | 14.78 | 15.09 |
+| 4 | `ridge_lag` | 12,611.25 | 1.299 | 1.377 | 14.96 | 15.94 |
+
+For this 72-hour dataset, the seasonal naive baseline is still the strongest overall model. That is a useful result: with only three days of hourly observations, the previous-day seasonal pattern carries more reliable signal than the trained lag models.
+
 ## Dashboard
 
 Start the Streamlit dashboard:
@@ -371,11 +408,3 @@ The tests currently cover downloader planning, retries, manifest scoping, gzip h
 | API coverage | FastAPI currently exposes Gold analytics, but forecast endpoints are not yet exposed. |
 | Delta coverage | Delta conversion currently covers compact Gold tables, not forecast tables. |
 | Airflow runtime | Airflow is configured for local Linux/WSL usage, not Docker. |
-
-## Recommended Next Improvements
-
-1. Add forecast endpoints to FastAPI.
-2. Add strict validation for forecast output completeness before serving DB rebuilds.
-3. Add optional Bronze checksum verification before Silver processing.
-4. Add Delta conversion for forecast tables if forecasts become a first-class data product.
-5. Add a stronger Airflow DAG parse test using `DagBag`.
