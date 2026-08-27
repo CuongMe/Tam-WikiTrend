@@ -1,6 +1,17 @@
 # WikiTrend
 
-WikiTrend is a local Python 3.11 data engineering project for Wikimedia hourly pageview data. It implements a bounded batch lakehouse that downloads raw Wikimedia dumps, cleans them into Silver Parquet, builds compact Gold analytics tables, trains baseline forecasting models, and serves the results through DuckDB, Streamlit, FastAPI, Delta Lake, and optional Apache Airflow orchestration.
+<p align="center">
+  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="Apache Spark" src="https://img.shields.io/badge/Apache%20Spark-Silver%20ETL-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white">
+  <img alt="DuckDB" src="https://img.shields.io/badge/DuckDB-Serving%20DB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black">
+  <img alt="Streamlit" src="https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white">
+  <img alt="Airflow" src="https://img.shields.io/badge/Airflow-Orchestration-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white">
+</p>
+
+WikiTrend is a student portfolio data engineering project for Wikimedia hourly pageview data. It implements a bounded batch lakehouse that downloads raw Wikimedia dumps, cleans them into Silver Parquet, builds compact Gold analytics tables, trains baseline forecasting models, and serves the results through DuckDB, Streamlit, FastAPI, Delta Lake, and optional Apache Airflow orchestration.
+
+> [!NOTE]
+> This project is designed as a portfolio artifact: it favors clear data contracts, reproducible local commands, validation reports, and readable engineering tradeoffs over production cloud infrastructure.
 
 The project is intentionally scoped to a small 72-hour dataset so it can run on a local machine without Docker or cloud storage.
 
@@ -235,6 +246,14 @@ DuckDB serves these as views over Parquet files, so the serving layer does not d
 ## Results
 
 The latest local run completed successfully for the configured 72-hour scope.
+
+### Visual Summary
+
+![Hourly Wikimedia pageview demand](assets/readme/hourly_views.png)
+
+![Serving database inventory](assets/readme/serving_inventory.png)
+
+![Forecast model leaderboard by RMASE](assets/readme/forecast_rmase_leaderboard.png)
 
 ### Validation Summary
 
